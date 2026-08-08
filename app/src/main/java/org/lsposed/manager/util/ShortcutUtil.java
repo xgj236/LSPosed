@@ -138,6 +138,7 @@ public class ShortcutUtil {
 
     public static boolean isRequestPinShortcutSupported(Context context) throws RuntimeException {
         var sm = context.getSystemService(ShortcutManager.class);
+        if (sm == null) return false;
         return sm.isRequestPinShortcutSupported();
     }
 
@@ -145,7 +146,7 @@ public class ShortcutUtil {
         if (!App.isParasitic) throw new RuntimeException();
         var context = App.getInstance();
         var sm = context.getSystemService(ShortcutManager.class);
-        if (!sm.isRequestPinShortcutSupported()) return false;
+        if (sm == null || !sm.isRequestPinShortcutSupported()) return false;
         return sm.requestPinShortcut(getShortcutBuilder(context).build(),
                 registerReceiver(context, afterPinned));
     }
@@ -154,6 +155,7 @@ public class ShortcutUtil {
         if (!isLaunchShortcutPinned()) return false;
         var context = App.getInstance();
         var sm = context.getSystemService(ShortcutManager.class);
+        if (sm == null) return false;
         List<ShortcutInfo> shortcutInfoList = new ArrayList<>();
         shortcutInfoList.add(getShortcutBuilder(context).build());
         return sm.updateShortcuts(shortcutInfoList);
@@ -162,6 +164,7 @@ public class ShortcutUtil {
     public static boolean isLaunchShortcutPinned() {
         var context = App.getInstance();
         var sm = context.getSystemService(ShortcutManager.class);
+        if (sm == null) return false;
         for (var info : sm.getPinnedShortcuts()) {
             if (SHORTCUT_ID.equals(info.getId())) {
                 return true;
