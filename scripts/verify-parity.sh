@@ -141,6 +141,17 @@ check_marker "sepolicy allows the control socket" sepolicy.rule "unix_stream_soc
 # Look inside the apks too: the byte comparison above proves the two flavors
 # agree, but not that either one actually contains the features. A build from a
 # source tree missing the CLI would pass an identity check and fail here.
+# Locate aapt2 for the resource-table check below. Release builds run
+# `aapt2 optimize --collapse-resource-names`, which rewrites res/ paths to short
+# names like res/sk.xml, so the watch layout cannot be found by filename — only
+# the resource table still records its `watch` qualifier.
+AAPT2=""
+for base in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" "$(sed -n 's/^sdk\.dir=//p' "$ROOT/local.properties" 2>/dev/null | tr -d '\r')"; do
+  [ -n "$base" ] || continue
+  cand="$(find "$base/build-tools" -maxdepth 2 -name 'aapt2*' -type f 2>/dev/null | sort -r | head -1)"
+  if [ -n "$cand" ]; then AAPT2="$cand"; break; fi
+done
+
 missing_cli=""
 missing_watch=""
 for f in riru zygisk; do
@@ -150,13 +161,27 @@ for f in riru zygisk; do
   n_cli="$(unzip -p "$WORK/$f/daemon.apk" 'classes*.dex' 2>/dev/null | grep -ac "lspd_ctl" || true)"
   [ "${n_cli:-0}" -gt 0 ] || missing_cli="$missing_cli $f"
 
-  n_watch="$(unzip -l "$WORK/$f/manager.apk" 2>/dev/null | grep -c "layout-watch.*/activity_main\.xml" || true)"
+  if [ -n "$AAPT2" ]; then
+    # Count entries carrying the `watch` qualifier in the resource table.
+    #
+    # Release builds cannot be checked by name: aapt2 optimize
+    # --collapse-resource-names rewrites res/ paths to short names AND replaces
+    # every resource name with `0_resource_name_obfuscated`, so neither
+    # "layout-watch" nor "activity_main" appears anywhere. The configuration
+    # qualifier is the only thing that survives, and it is what actually decides
+    # whether a watch selects this layout at runtime.
+    n_watch="$("$AAPT2" dump resources "$WORK/$f/manager.apk" 2>/dev/null |
+      grep -c "^ *(watch)" || true)"
+  else
+    # No aapt2: fall back to the filename, which only holds for debug builds.
+    n_watch="$(unzip -l "$WORK/$f/manager.apk" 2>/dev/null | grep -c "layout-watch.*/activity_main\.xml" || true)"
+  fi
   [ "${n_watch:-0}" -gt 0 ] || missing_watch="$missing_watch $f"
 done
 [ -z "$missing_cli" ] && pass "daemon.apk carries the lspd_ctl control socket" \
   || fail "daemon.apk missing the lspd_ctl socket in:$missing_cli"
-[ -z "$missing_watch" ] && pass "manager.apk carries the watch layout" \
-  || fail "manager.apk missing layout-watch/activity_main.xml in:$missing_watch"
+[ -z "$missing_watch" ] && pass "manager.apk carries watch-qualified resources" \
+  || fail "manager.apk has no watch-qualified resources in:$missing_watch"
 
 # --- Flavor-specific differences -------------------------------------------
 #
