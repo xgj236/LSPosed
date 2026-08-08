@@ -4,6 +4,9 @@
 -keepclasseswithmembers class org.lsposed.lspd.Main {
     public static void main(java.lang.String[]);
 }
+-keepclasseswithmembers class org.lsposed.lspd.cli.CliMain {
+    public static void main(java.lang.String[]);
+}
 -keepclasseswithmembers class org.lsposed.lspd.service.Dex2OatService {
     private java.lang.String devTmpDir;
     private java.lang.String magiskPath;

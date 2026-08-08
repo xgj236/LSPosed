@@ -1,0 +1,30 @@
+#!/system/bin/sh
+#
+# This file is part of LSPosed.
+#
+# LSPosed command line helper.
+#
+# It launches the CLI entry point bundled inside daemon.apk and forwards every
+# argument to it. The CLI then talks to the already running LSPosed daemon over
+# its control socket to enable modules and tick scopes.
+#
+# Must be run as root, e.g.:
+#   su -c "/data/adb/modules/zygisk_lsposed/lspd-cli activate com.example.mod \
+#          --scope com.android.settings,com.tencent.mm/0"
+#
+
+dir=${0%/*}
+
+# Prefer a pushed debug apk if present (mirrors the daemon launcher behaviour).
+tmpLspdApk="/data/local/tmp/daemon.apk"
+if [ -r "$tmpLspdApk" ]; then
+  apk="$tmpLspdApk"
+else
+  apk="$dir/daemon.apk"
+fi
+
+exec /system/bin/app_process \
+  -Djava.class.path="$apk" \
+  /system/bin \
+  --nice-name=lspd-cli \
+  org.lsposed.lspd.cli.CliMain "$@"

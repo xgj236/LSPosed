@@ -1,1 +1,3 @@
 allow dex2oat dex2oat_exec file execute_no_trans
+# Allow the root shell / su domain to connect to the daemon lspd-cli control socket.
+allow magisk magisk unix_stream_socket connectto

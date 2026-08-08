@@ -61,6 +61,8 @@ public class ServiceManager {
     private static LSPSystemServerService systemServerService = null;
     private static LogcatService logcatService = null;
     private static Dex2OatService dex2OatService = null;
+    @SuppressWarnings("FieldCanBeLocal")
+    private static CommandListener commandListener = null;
 
     private static final ExecutorService executorService = Executors.newSingleThreadExecutor();
 
@@ -148,6 +150,11 @@ public class ServiceManager {
         waitSystemService(Context.APP_OPS_SERVICE);
 
         ConfigFileManager.reloadConfiguration();
+
+        // Expose the command line control socket now that config + package
+        // services are ready, so `lspd-cli` can enable modules and tick scopes.
+        commandListener = new CommandListener(configManager);
+        commandListener.start();
 
         BridgeService.send(mainService, new BridgeService.Listener() {
             @Override
