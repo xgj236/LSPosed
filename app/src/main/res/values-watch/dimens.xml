@@ -1,0 +1,18 @@
+<!--
+  ~ LSPosed watch adaptation.
+  ~
+  ~ Selected on devices declaring android.hardware.type.watch. The reference
+  ~ device (Z11_SN) reports sw159dp-w159dp-h179dp at 416dpi, so there is far
+  ~ less room than on a phone and every fixed dimension has to shrink.
+  -->
+
+<resources>
+    <dimen name="app_icon_size">24dp</dimen>
+    <dimen name="tab_layout_height">32dp</dimen>
+    <dimen name="home_primary_elevation">1dp</dimen>
+
+    <!-- Compact bottom nav: 5 unlabelled icons have to fit in ~159dp. -->
+    <dimen name="watch_nav_height">36dp</dimen>
+    <dimen name="watch_nav_icon_size">20dp</dimen>
+    <dimen name="watch_nav_item_padding">4dp</dimen>
+</resources>

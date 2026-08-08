@@ -23,4 +23,9 @@
     <dimen name="tab_layout_height">48dp</dimen>
 
     <dimen name="home_primary_elevation">6dp</dimen>
+
+    <!-- Only consumed by layout-watch; defined here so every configuration resolves. -->
+    <dimen name="watch_nav_height">56dp</dimen>
+    <dimen name="watch_nav_icon_size">24dp</dimen>
+    <dimen name="watch_nav_item_padding">8dp</dimen>
 </resources>
