@@ -5,3 +5,9 @@
 .DS_Store
 /build
 /captures
+
+# libxposed dependencies cloned and published by scripts/build.sh
+/.deps
+
+# Local scratch space: logcat dumps, notes, throwaway test scripts
+/scratch

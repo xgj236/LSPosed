@@ -3,5 +3,4 @@ name=${api} - LSPosed
 version=${versionName} (${versionCode})
 versionCode=${versionCode}
 author=${authorList}
-description=Another enhanced implementation of Xposed Framework. Supports Android 8.1 ~ 14. ${requirement}.
-updateJson=${updateJson}
+description=Xposed 框架实现，支持命令行激活模块与勾选作用域，含手表小屏适配。${requirement}。

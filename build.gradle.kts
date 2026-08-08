@@ -23,7 +23,6 @@ import com.android.build.gradle.api.AndroidBasePlugin
 
 plugins {
     alias(libs.plugins.lsplugin.cmaker)
-    alias(libs.plugins.lsplugin.jgit)
     alias(libs.plugins.agp.lib) apply false
     alias(libs.plugins.agp.app) apply false
     alias(libs.plugins.nav.safeargs) apply false
@@ -56,16 +55,21 @@ cmaker {
     }
 }
 
-val repo = jgit.repo()
-val commitCount = (repo?.commitCount("refs/remotes/origin/master") ?: 1) + 4200
-val latestTag = repo?.latestTag?.removePrefix("v") ?: "1.0"
+// Pinned to match upstream LSPosed 1.9.2 instead of being derived from the git
+// history. Upstream computes these from the commit count on origin/master
+// (2824 commits at tag v1.9.2, + the 4200 offset = 7024), which makes the
+// version depend on clone depth and on which branch happens to be fetched — a
+// shallow clone silently produces a wrong, much lower code. Hardcoding keeps
+// this fork's builds reporting the same version as the official 1.9.2 release.
+val verCodePinned = 7024
+val verNamePinned = "1.9.2"
 
 val injectedPackageName by extra("com.android.shell")
 val injectedPackageUid by extra(2000)
 
 val defaultManagerPackageName by extra("org.lsposed.manager")
-val verCode by extra(commitCount)
-val verName by extra(latestTag)
+val verCode by extra(verCodePinned)
+val verName by extra(verNamePinned)
 val androidTargetSdkVersion by extra(34)
 val androidMinSdkVersion by extra(27)
 val androidBuildToolsVersion by extra("34.0.0")

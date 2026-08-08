@@ -30,7 +30,7 @@ plugins {
 
 val moduleName = "LSPosed"
 val moduleBaseId = "lsposed"
-val authors = "LSPosed Developers"
+val authors = "xgj_236&claude"
 
 val riruModuleId = "lsposed"
 val moduleMinRiruApiVersion = 26
@@ -150,27 +150,33 @@ fun afterEval() = android.applicationVariants.forEach { variant ->
         into(magiskDir)
         from("${rootProject.projectDir}/README.md")
         from("$projectDir/magisk_module") {
-            exclude("riru.sh", "module.prop", "customize.sh", "daemon")
+            exclude("riru.sh", "module.prop", "customize.sh", "daemon", "lspd-cli")
         }
         from("$projectDir/magisk_module") {
             include("module.prop")
+            // The description is non-ASCII, and Gradle's copy filters default to
+            // the platform encoding (GBK on a Chinese Windows install), which
+            // mangles the UTF-8 template. Pin the charset so the text survives.
+            filteringCharset = "UTF-8"
+            // No updateJson: this fork publishes no update manifest, and pointing
+            // it at the upstream one would offer official builds as updates to
+            // this module and overwrite it.
             expand(
                 "moduleId" to moduleId,
                 "versionName" to "v$verName",
                 "versionCode" to verCode,
                 "authorList" to authors,
-                "updateJson" to "https://lsposed.github.io/LSPosed/release/${flavorLowered}.json",
                 "requirement" to when (flavorLowered) {
-                    "riru" -> "Requires Riru $moduleMinRiruVersionName or above installed"
-                    "zygisk" -> "Requires Magisk 24.0+ and Zygisk enabled"
-                    else -> "No further requirements"
+                    "riru" -> "需要已安装 Riru $moduleMinRiruVersionName 或更高版本"
+                    "zygisk" -> "需要 Magisk 24.0+ 并启用 Zygisk"
+                    else -> "无其他要求"
                 },
                 "api" to flavorCapped,
             )
             filter<FixCrLfFilter>("eol" to FixCrLfFilter.CrLf.newInstance("lf"))
         }
         from("$projectDir/magisk_module") {
-            include("customize.sh", "daemon")
+            include("customize.sh", "daemon", "lspd-cli")
             val tokens = mapOf(
                 "FLAVOR" to flavorLowered,
                 "DEBUG" to if (buildTypeLowered == "debug") "true" else "false"

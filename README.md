@@ -1,6 +1,62 @@
-# LSPosed Framework
+# LSPosed Framework (fork)
 
-[![Build](https://img.shields.io/github/actions/workflow/status/LSPosed/LSPosed/core.yml?branch=master&event=push&logo=github&label=Build)](https://github.com/LSPosed/LSPosed/actions/workflows/core.yml?query=event%3Apush+branch%3Amaster+is%3Acompleted) [![Crowdin](https://img.shields.io/badge/Localization-Crowdin-blueviolet?logo=Crowdin)](https://lsposed.crowdin.com/lsposed) [![Channel](https://img.shields.io/badge/Follow-Telegram-blue.svg?logo=telegram)](https://t.me/LSPosed) [![Chat](https://img.shields.io/badge/Join-QQ%E9%A2%91%E9%81%93-red?logo=tencent-qq&logoColor=red)](https://qun.qq.com/qqweb/qunpro/share?_wv=3&_wwv=128&inviteCode=Xz9dJ&from=246610&biz=ka) [![Download](https://img.shields.io/github/v/release/LSPosed/LSPosed?color=orange&logoColor=orange&label=Download&logo=DocuSign)](https://github.com/LSPosed/LSPosed/releases/latest) [![Total](https://shields.io/github/downloads/LSPosed/LSPosed/total?logo=Bookmeter&label=Counts&logoColor=yellow&color=yellow)](https://github.com/LSPosed/LSPosed/releases)
+A fork of [LSPosed](https://github.com/LSPosed/LSPosed) adding a command line
+interface for module activation, a crash fix for custom ROMs, and smartwatch
+layout support. Everything below the "Upstream README" heading is unchanged from
+upstream.
+
+## What this fork adds
+
+- **`lspd-cli`** — enable a module and tick its scopes from a root shell in one
+  command, without opening the manager app. Speaks to the daemon over an
+  abstract socket using the same `ConfigManager` calls the manager UI uses.
+- **Settings crash fix** — `ShortcutManager` is absent on some custom ROMs, where
+  the unguarded `getSystemService` call made the settings page crash on open.
+- **Watch support** — compact layout selected via `android.hardware.type.watch`,
+  with the same view hierarchy as the phone layout so no Java changes are needed.
+
+Both the Riru and Zygisk flavors carry all three. See [docs/](docs/) for details.
+
+## Build
+
+```sh
+scripts/build.sh                 # both flavors, debug
+scripts/build.sh release         # both flavors, release
+```
+
+PowerShell: `.\scripts\build.ps1`
+
+The script fetches submodules, clones and patches the two libxposed
+dependencies at pinned commits, publishes them to mavenLocal, builds both
+flavors in a single Gradle invocation, and verifies the two zips are in parity.
+Artifacts land in `magisk-loader/release/`.
+
+Requires JDK 17, Android SDK Platform 34, Build-Tools 34.0.0, NDK
+26.1.10909125, and CMake 3.22.1. Full setup notes — including why the
+libxposed `100` tags are *not* the right commits — are in
+[docs/BUILDING.md](docs/BUILDING.md).
+
+Both flavors are built together on purpose: `app` and `daemon` are not
+flavor-specific, so building them separately lets the two zips drift apart.
+`scripts/verify-parity.sh` asserts they haven't.
+
+## Documentation
+
+- [docs/BUILDING.md](docs/BUILDING.md) — build script, toolchain, dependency pinning
+- [docs/CLI.md](docs/CLI.md) — `lspd-cli` usage, wire protocol, permission model
+- [docs/CRASH_FIX.md](docs/CRASH_FIX.md) — the `ShortcutManager` NPE fix
+- [docs/WATCH_ADAPTATION.md](docs/WATCH_ADAPTATION.md) — watch layout approach
+- [docs/TESTING.md](docs/TESTING.md) — on-device test record and coverage gaps
+
+## License
+
+GPL-3, inherited from upstream LSPosed.
+
+---
+
+# Upstream README
+
+[![Crowdin](https://img.shields.io/badge/Localization-Crowdin-blueviolet?logo=Crowdin)](https://lsposed.crowdin.com/lsposed) [![Channel](https://img.shields.io/badge/Follow-Telegram-blue.svg?logo=telegram)](https://t.me/LSPosed) [![Chat](https://img.shields.io/badge/Join-QQ%E9%A2%91%E9%81%93-red?logo=tencent-qq&logoColor=red)](https://qun.qq.com/qqweb/qunpro/share?_wv=3&_wwv=128&inviteCode=Xz9dJ&from=246610&biz=ka) [![Download](https://img.shields.io/github/v/release/LSPosed/LSPosed?color=orange&logoColor=orange&label=Download&logo=DocuSign)](https://github.com/LSPosed/LSPosed/releases/latest) [![Total](https://shields.io/github/downloads/LSPosed/LSPosed/total?logo=Bookmeter&label=Counts&logoColor=yellow&color=yellow)](https://github.com/LSPosed/LSPosed/releases)
 
 ## Introduction 
 
