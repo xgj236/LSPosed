@@ -25,6 +25,7 @@ import android.os.RemoteException;
 import android.system.Os;
 
 import org.lsposed.lspd.ILSPManagerService;
+import org.lsposed.manager.util.ModuleUtil;
 
 public class LSPManagerServiceHolder implements IBinder.DeathRecipient {
     private static LSPManagerServiceHolder holder = null;
@@ -43,6 +44,9 @@ public class LSPManagerServiceHolder implements IBinder.DeathRecipient {
     private LSPManagerServiceHolder(IBinder binder) {
         linkToDeath(binder);
         service = ILSPManagerService.Stub.asInterface(binder);
+        if (binder.isBinderAlive()) {
+            ModuleUtil.reloadIfInitialized();
+        }
     }
 
     private void linkToDeath(IBinder binder) {

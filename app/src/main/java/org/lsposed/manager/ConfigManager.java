@@ -27,6 +27,8 @@ import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.util.Log;
 
+import androidx.annotation.Nullable;
+
 import org.lsposed.lspd.ILSPManagerService;
 import org.lsposed.lspd.models.Application;
 import org.lsposed.lspd.models.UserInfo;
@@ -42,7 +44,39 @@ import java.util.Set;
 public class ConfigManager {
 
     public static boolean isBinderAlive() {
-        return LSPManagerServiceHolder.getService() != null;
+        var service = LSPManagerServiceHolder.getService();
+        return service != null && service.asBinder().isBinderAlive();
+    }
+
+    @Nullable
+    public static ModuleState getModuleState(int flags) {
+        var service = LSPManagerServiceHolder.getService();
+        if (service == null || !service.asBinder().isBinderAlive()) return null;
+        try {
+            var users = service.getUsers();
+            var packages = service.getInstalledPackagesFromAllUsers(flags, false);
+            var enabledModules = service.enabledModules();
+            if (users == null || packages == null || packages.getList() == null || enabledModules == null) {
+                Log.w(App.TAG, "Incomplete module state from manager service");
+                return null;
+            }
+            return new ModuleState(users, packages.getList(), enabledModules);
+        } catch (RemoteException e) {
+            Log.e(App.TAG, "Failed to load module state", e);
+            return null;
+        }
+    }
+
+    public static final class ModuleState {
+        public final List<UserInfo> users;
+        public final List<PackageInfo> packages;
+        public final String[] enabledModules;
+
+        private ModuleState(List<UserInfo> users, List<PackageInfo> packages, String[] enabledModules) {
+            this.users = users;
+            this.packages = packages;
+            this.enabledModules = enabledModules;
+        }
     }
 
     public static int getXposedApiVersion() {
@@ -196,11 +230,19 @@ public class ConfigManager {
         }
     }
 
+    public static PackageInfo getPackageInfoStrict(String packageName, int flags, int userId) throws PackageManager.NameNotFoundException, RemoteException {
+        var service = LSPManagerServiceHolder.getService();
+        if (service == null || !service.asBinder().isBinderAlive()) {
+            throw new RemoteException("Manager service is not available");
+        }
+        var info = service.getPackageInfo(packageName, flags, userId);
+        if (info == null) throw new PackageManager.NameNotFoundException();
+        return info;
+    }
+
     public static PackageInfo getPackageInfo(String packageName, int flags, int userId) throws PackageManager.NameNotFoundException {
         try {
-            var info = LSPManagerServiceHolder.getService().getPackageInfo(packageName, flags, userId);
-            if (info == null) throw new PackageManager.NameNotFoundException();
-            return info;
+            return getPackageInfoStrict(packageName, flags, userId);
         } catch (RemoteException e) {
             Log.e(App.TAG, Log.getStackTraceString(e));
             throw new PackageManager.NameNotFoundException();

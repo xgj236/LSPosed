@@ -243,6 +243,17 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
 
     @Override
     public void onModulesReloaded() {
+        if (adapter != null) {
+            adapter.refresh();
+        }
+        updateRepoSummary();
+    }
+
+    @Override
+    public void onSingleModuleReloaded(ModuleUtil.InstalledModule module) {
+        if (adapter != null) {
+            adapter.refresh();
+        }
         updateRepoSummary();
     }
 

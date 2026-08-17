@@ -25,6 +25,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.os.Build;
+import android.os.RemoteException;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -60,9 +61,10 @@ public final class ModuleUtil {
     private static ModuleUtil instance = null;
     private final PackageManager pm;
     private final Set<ModuleListener> listeners = ConcurrentHashMap.newKeySet();
-    private HashSet<String> enabledModules = new HashSet<>();
-    private List<UserInfo> users = new ArrayList<>();
-    private Map<Pair<String, Integer>, InstalledModule> installedModules = new HashMap<>();
+    private final Object moduleLock = new Object();
+    private Set<String> enabledModules = Collections.emptySet();
+    private List<UserInfo> users = Collections.emptyList();
+    private Map<Pair<String, Integer>, InstalledModule> installedModules = Collections.emptyMap();
     private boolean modulesLoaded = false;
 
     static final int MATCH_ANY_USER = 0x00400000; // PackageManager.MATCH_ANY_USER
@@ -74,7 +76,9 @@ public final class ModuleUtil {
     }
 
     public boolean isModulesLoaded() {
-        return modulesLoaded;
+        synchronized (moduleLock) {
+            return modulesLoaded;
+        }
     }
 
     public static synchronized ModuleUtil getInstance() {
@@ -83,6 +87,12 @@ public final class ModuleUtil {
             App.getExecutorService().submit(instance::reloadInstalledModules);
         }
         return instance;
+    }
+
+    public static synchronized void reloadIfInitialized() {
+        if (instance != null) {
+            App.getExecutorService().submit(instance::reloadInstalledModules);
+        }
     }
 
     public static int extractIntPart(String str) {
@@ -122,16 +132,20 @@ public final class ModuleUtil {
         return info.metaData != null && info.metaData.containsKey("xposedminversion");
     }
 
-    synchronized public void reloadInstalledModules() {
-        modulesLoaded = false;
+    public synchronized void reloadInstalledModules() {
         if (!ConfigManager.isBinderAlive()) {
-            modulesLoaded = true;
+            Log.d(App.TAG, "Module reload deferred: manager service is not ready");
+            return;
+        }
+
+        var state = ConfigManager.getModuleState(PackageManager.GET_META_DATA | MATCH_ALL_FLAGS);
+        if (state == null) {
+            Log.w(App.TAG, "Module reload failed: retaining previous module state");
             return;
         }
 
         Map<Pair<String, Integer>, InstalledModule> modules = new HashMap<>();
-        var users = ConfigManager.getUsers();
-        for (PackageInfo pkg : ConfigManager.getInstalledPackagesFromAllUsers(PackageManager.GET_META_DATA | MATCH_ALL_FLAGS, false)) {
+        for (PackageInfo pkg : state.packages) {
             ApplicationInfo app = pkg.applicationInfo;
 
             var modernApk = getModernModuleApk(app);
@@ -140,56 +154,96 @@ public final class ModuleUtil {
             }
         }
 
-        installedModules = modules;
-
-        this.users = users;
-
-        enabledModules = new HashSet<>(Arrays.asList(ConfigManager.getEnabledModules()));
-        modulesLoaded = true;
+        synchronized (moduleLock) {
+            installedModules = Collections.unmodifiableMap(modules);
+            users = Collections.unmodifiableList(new ArrayList<>(state.users));
+            enabledModules = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(state.enabledModules)));
+            modulesLoaded = true;
+        }
+        Log.d(App.TAG, "Module reload completed: " + modules.size() + " modules");
         listeners.forEach(ModuleListener::onModulesReloaded);
     }
 
     @Nullable
     public List<UserInfo> getUsers() {
-        return modulesLoaded ? users : null;
+        synchronized (moduleLock) {
+            return modulesLoaded ? users : null;
+        }
     }
 
     public InstalledModule reloadSingleModule(String packageName, int userId) {
         return reloadSingleModule(packageName, userId, false);
     }
 
-    public InstalledModule reloadSingleModule(String packageName, int userId, boolean packageFullyRemoved) {
-        if (packageFullyRemoved && isModuleEnabled(packageName)) {
-            enabledModules.remove(packageName);
-            listeners.forEach(ModuleListener::onModulesReloaded);
+    public synchronized InstalledModule reloadSingleModule(String packageName, int userId, boolean packageFullyRemoved) {
+        if (!ConfigManager.isBinderAlive()) {
+            Log.d(App.TAG, "Single module reload deferred: manager service is not ready");
+            return null;
         }
-        PackageInfo pkg;
 
+        PackageInfo pkg;
         try {
-            pkg = ConfigManager.getPackageInfo(packageName, PackageManager.GET_META_DATA, userId);
+            pkg = ConfigManager.getPackageInfoStrict(packageName, PackageManager.GET_META_DATA, userId);
+        } catch (RemoteException e) {
+            Log.w(App.TAG, "Single module reload failed: retaining previous module state", e);
+            return null;
         } catch (NameNotFoundException e) {
-            InstalledModule old = installedModules.remove(Pair.create(packageName, userId));
+            InstalledModule old;
+            boolean enabledChanged;
+            synchronized (moduleLock) {
+                old = installedModules.get(Pair.create(packageName, userId));
+                enabledChanged = packageFullyRemoved && enabledModules.contains(packageName);
+                if (old != null) {
+                    var modules = new HashMap<>(installedModules);
+                    modules.remove(Pair.create(packageName, userId));
+                    installedModules = Collections.unmodifiableMap(modules);
+                }
+                if (enabledChanged) {
+                    var enabled = new HashSet<>(enabledModules);
+                    enabled.remove(packageName);
+                    enabledModules = Collections.unmodifiableSet(enabled);
+                }
+            }
+            if (enabledChanged) listeners.forEach(ModuleListener::onModulesReloaded);
             if (old != null) listeners.forEach(i -> i.onSingleModuleReloaded(old));
             return null;
         }
 
         ApplicationInfo app = pkg.applicationInfo;
         var modernApk = getModernModuleApk(app);
-        if (modernApk != null || isLegacyModule(app)) {
-            InstalledModule module = new InstalledModule(pkg, modernApk);
-            installedModules.put(Pair.create(packageName, userId), module);
+        InstalledModule module = modernApk != null || isLegacyModule(app) ? new InstalledModule(pkg, modernApk) : null;
+        InstalledModule old;
+        boolean enabledChanged;
+        synchronized (moduleLock) {
+            old = installedModules.get(Pair.create(packageName, userId));
+            enabledChanged = packageFullyRemoved && enabledModules.contains(packageName);
+            var modules = new HashMap<>(installedModules);
+            if (module != null) {
+                modules.put(Pair.create(packageName, userId), module);
+            } else {
+                modules.remove(Pair.create(packageName, userId));
+            }
+            installedModules = Collections.unmodifiableMap(modules);
+            if (enabledChanged) {
+                var enabled = new HashSet<>(enabledModules);
+                enabled.remove(packageName);
+                enabledModules = Collections.unmodifiableSet(enabled);
+            }
+        }
+        if (enabledChanged) listeners.forEach(ModuleListener::onModulesReloaded);
+        if (module != null) {
             listeners.forEach(i -> i.onSingleModuleReloaded(module));
             return module;
-        } else {
-            InstalledModule old = installedModules.remove(Pair.create(packageName, userId));
-            if (old != null) listeners.forEach(i -> i.onSingleModuleReloaded(old));
-            return null;
         }
+        if (old != null) listeners.forEach(i -> i.onSingleModuleReloaded(old));
+        return null;
     }
 
     @Nullable
     public InstalledModule getModule(String packageName, int userId) {
-        return modulesLoaded ? installedModules.get(Pair.create(packageName, userId)) : null;
+        synchronized (moduleLock) {
+            return modulesLoaded ? installedModules.get(Pair.create(packageName, userId)) : null;
+        }
     }
 
     @Nullable
@@ -198,28 +252,38 @@ public final class ModuleUtil {
     }
 
     @Nullable
-    synchronized public Map<Pair<String, Integer>, InstalledModule> getModules() {
-        return modulesLoaded ? installedModules : null;
+    public Map<Pair<String, Integer>, InstalledModule> getModules() {
+        synchronized (moduleLock) {
+            return modulesLoaded ? installedModules : null;
+        }
     }
 
     public boolean setModuleEnabled(String packageName, boolean enabled) {
         if (!ConfigManager.setModuleEnabled(packageName, enabled)) {
             return false;
         }
-        if (enabled) {
-            enabledModules.add(packageName);
-        } else {
-            enabledModules.remove(packageName);
+        synchronized (moduleLock) {
+            var updatedEnabledModules = new HashSet<>(enabledModules);
+            if (enabled) {
+                updatedEnabledModules.add(packageName);
+            } else {
+                updatedEnabledModules.remove(packageName);
+            }
+            enabledModules = Collections.unmodifiableSet(updatedEnabledModules);
         }
         return true;
     }
 
     public boolean isModuleEnabled(String packageName) {
-        return enabledModules.contains(packageName);
+        synchronized (moduleLock) {
+            return enabledModules.contains(packageName);
+        }
     }
 
     public int getEnabledModulesCount() {
-        return modulesLoaded ? enabledModules.size() : -1;
+        synchronized (moduleLock) {
+            return modulesLoaded ? enabledModules.size() : -1;
+        }
     }
 
     public void addListener(ModuleListener listener) {
