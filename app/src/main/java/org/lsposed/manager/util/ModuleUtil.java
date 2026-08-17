@@ -117,7 +117,7 @@ public final class ModuleUtil {
         for (var apk : apks) {
             try {
                 zip = new ZipFile(apk);
-                if (zip.getEntry("META-INF/xposed/java_init.list") != null) {
+                if (zip.getEntry("META-INF/xposed/java_init.list") != null || zip.getEntry("assets/xposed_init") != null) {
                     return zip;
                 }
                 zip.close();
