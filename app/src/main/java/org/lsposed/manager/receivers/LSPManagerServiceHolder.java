@@ -44,9 +44,9 @@ public class LSPManagerServiceHolder implements IBinder.DeathRecipient {
     private LSPManagerServiceHolder(IBinder binder) {
         linkToDeath(binder);
         service = ILSPManagerService.Stub.asInterface(binder);
-        if (binder.isBinderAlive()) {
-            ModuleUtil.reloadIfInitialized();
-        }
+        // The service is now reachable; pick up any load that was deferred because
+        // ModuleUtil was constructed before the binder arrived.
+        ModuleUtil.reloadIfInitialized();
     }
 
     private void linkToDeath(IBinder binder) {

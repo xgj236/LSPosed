@@ -28,4 +28,13 @@
     <dimen name="watch_nav_height">56dp</dimen>
     <dimen name="watch_nav_icon_size">24dp</dimen>
     <dimen name="watch_nav_item_padding">8dp</dimen>
+
+    <!--
+      ~ Applied via ThemeOverlay.Watch instead of a -watch qualifier. Watch displays
+      ~ fall below Android's smallest size bucket (small = 320 x 426dp), so the
+      ~ platform runs the app in screen compatibility mode and synthesises a
+      ~ `normal` configuration, leaving the -watch resources unreachable on them.
+      -->
+    <dimen name="watch_collapsing_toolbar_size">96dp</dimen>
+    <dimen name="watch_dialog_padding">12dp</dimen>
 </resources>

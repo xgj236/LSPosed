@@ -44,14 +44,17 @@ import java.util.Set;
 public class ConfigManager {
 
     public static boolean isBinderAlive() {
-        var service = LSPManagerServiceHolder.getService();
-        return service != null && service.asBinder().isBinderAlive();
+        // Deliberately only a null check: in parasitic mode the manager shares a
+        // process with the service and holds a local Binder, where adding an
+        // asBinder().isBinderAlive() probe reports the service as dead and the
+        // whole UI falls back to "LSPosed not installed".
+        return LSPManagerServiceHolder.getService() != null;
     }
 
     @Nullable
     public static ModuleState getModuleState(int flags) {
         var service = LSPManagerServiceHolder.getService();
-        if (service == null || !service.asBinder().isBinderAlive()) return null;
+        if (service == null) return null;
         try {
             var users = service.getUsers();
             var packages = service.getInstalledPackagesFromAllUsers(flags, false);
@@ -232,7 +235,7 @@ public class ConfigManager {
 
     public static PackageInfo getPackageInfoStrict(String packageName, int flags, int userId) throws PackageManager.NameNotFoundException, RemoteException {
         var service = LSPManagerServiceHolder.getService();
-        if (service == null || !service.asBinder().isBinderAlive()) {
+        if (service == null) {
             throw new RemoteException("Manager service is not available");
         }
         var info = service.getPackageInfo(packageName, flags, userId);

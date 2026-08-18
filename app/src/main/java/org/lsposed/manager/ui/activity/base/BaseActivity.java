@@ -21,6 +21,8 @@
 package org.lsposed.manager.ui.activity.base;
 
 import android.app.ActivityManager;
+import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -28,6 +30,7 @@ import android.graphics.Color;
 import android.graphics.drawable.AdaptiveIconDrawable;
 import android.graphics.drawable.BitmapDrawable;
 import android.os.Bundle;
+import android.util.DisplayMetrics;
 import android.view.Window;
 
 import androidx.annotation.NonNull;
@@ -43,10 +46,82 @@ import rikka.material.app.MaterialActivity;
 public class BaseActivity extends MaterialActivity {
     private static Bitmap icon = null;
 
+    /**
+     * Watch-class screens are smaller than Android's smallest official size bucket
+     * (small = 320 x 426dp), so the platform runs every app in screen compatibility
+     * mode and synthesises a {@code normal} configuration for it. That makes the
+     * -watch and -small resource qualifiers unreachable no matter how the activity
+     * configuration is overridden, so layouts cannot be swapped per screen class.
+     * <p>
+     * Instead, lower the effective density so the ordinary phone layouts get enough
+     * logical room to lay themselves out. At the stock 416dpi this display is only
+     * ~159 x 179dp, which is too narrow for the five-tab nav bar and the card
+     * paddings; scaling to {@link #WATCH_TARGET_WIDTH_DP} keeps everything legible
+     * while letting it fit.
+     */
+    private static final float WATCH_TARGET_WIDTH_DP = 240f;
+
+    private static volatile Boolean isWatch = null;
+    private boolean applyingWatchDensity = false;
+
+    private void applyWatchDensity(Resources res) {
+        // getResources() is overridden to call this, and PackageManager lookups can
+        // themselves reach back into getResources(), so guard against re-entering
+        // rather than relying on the feature result being cached first.
+        if (res == null || applyingWatchDensity) return;
+        applyingWatchDensity = true;
+        try {
+            if (isWatch == null) {
+                isWatch = getPackageManager().hasSystemFeature(PackageManager.FEATURE_WATCH);
+            }
+            if (!isWatch) return;
+            scaleForWatch(res);
+        } finally {
+            applyingWatchDensity = false;
+        }
+    }
+
+    private void scaleForWatch(Resources res) {
+        var metrics = res.getDisplayMetrics();
+        if (metrics.widthPixels <= 0) return;
+        float density = metrics.widthPixels / WATCH_TARGET_WIDTH_DP;
+        if (density >= metrics.density) return; // already roomy enough
+        // scaledDensity carries the user's font scale, so derive it from the ratio
+        // rather than overwriting it, otherwise font size settings stop applying.
+        float fontScale = metrics.scaledDensity / metrics.density;
+        metrics.density = density;
+        metrics.scaledDensity = density * fontScale;
+        metrics.densityDpi = (int) (density * DisplayMetrics.DENSITY_DEFAULT);
+    }
+
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
+        applyWatchDensity(super.getResources());
         setTheme(R.style.AppTheme);
         super.onCreate(savedInstanceState);
+    }
+
+    @Override
+    public Resources getResources() {
+        // Re-apply on every fetch: something in the theme/locale path restores the
+        // real metrics without a configuration change, which otherwise makes the
+        // scaling revert as soon as another fragment is opened.
+        var res = super.getResources();
+        applyWatchDensity(res);
+        return res;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        applyWatchDensity(super.getResources());
+    }
+
+    @Override
+    public void onConfigurationChanged(@NonNull Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // The framework restores the real metrics on every configuration change.
+        applyWatchDensity(super.getResources());
     }
 
     @Override
@@ -83,6 +158,9 @@ public class BaseActivity extends MaterialActivity {
         }
         theme.applyStyle(ThemeUtil.getNightThemeStyleRes(this), true);
         theme.applyStyle(rikka.material.preference.R.style.ThemeOverlay_Rikka_Material3_Preference, true);
+        if (getPackageManager().hasSystemFeature(PackageManager.FEATURE_WATCH)) {
+            theme.applyStyle(R.style.ThemeOverlay_Watch, true);
+        }
     }
 
     @Override

@@ -74,7 +74,7 @@ public class LSPosedService extends ILSPosedService.Stub {
         } else apks = new String[]{info.sourceDir};
         for (var apk : apks) {
             try (var zip = new ZipFile(apk)) {
-                if (zip.getEntry("META-INF/xposed/java_init.list") != null) {
+                if (zip.getEntry("META-INF/xposed/java_init.list") != null || zip.getEntry("assets/xposed_init") != null) {
                     return true;
                 }
             } catch (IOException ignored) {

@@ -24,4 +24,15 @@
         <item name="colorSurface">@android:color/black</item>
         <item name="android:colorBackground">@android:color/black</item>
     </style>
+
+    <!--
+      ~ Watch displays are ~180dp tall, where the large collapsing toolbar alone
+      ~ claims most of the viewport and squeezes list content to zero height.
+      ~ BaseActivity applies this overlay on devices reporting FEATURE_WATCH.
+      -->
+    <style name="ThemeOverlay.Watch">
+        <item name="collapsingToolbarLayoutLargeSize">@dimen/watch_collapsing_toolbar_size</item>
+        <item name="dialogPreferredPadding">@dimen/watch_dialog_padding</item>
+        <item name="android:dialogPreferredPadding">@dimen/watch_dialog_padding</item>
+    </style>
 </resources>

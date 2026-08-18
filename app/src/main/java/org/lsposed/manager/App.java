@@ -232,10 +232,16 @@ public class App extends Application {
                         var packageRemovedForAllUsers = intent.getBooleanExtra(EXTRA_REMOVED_FOR_ALL_USERS, false);
                         var isXposedModule = intent.getBooleanExtra("isXposedModule", false);
                         if (packageName != null) {
-                            if (isXposedModule)
+                            boolean packageAddedOrChanged = Intent.ACTION_PACKAGE_ADDED.equals(intent.getAction()) || Intent.ACTION_PACKAGE_CHANGED.equals(intent.getAction());
+                            if (isXposedModule || packageAddedOrChanged) {
                                 ModuleUtil.getInstance().reloadSingleModule(packageName, userId, packageRemovedForAllUsers);
-                            else
+                                if (packageAddedOrChanged) {
+                                    App.getMainHandler().postDelayed(() ->
+                                            App.getExecutorService().submit(() -> ModuleUtil.getInstance().reloadInstalledModules()), 1000);
+                                }
+                            } else {
                                 App.getExecutorService().submit(() -> AppHelper.getAppList(true));
+                            }
                         }
                     }
                     case ACTION_USER_ADDED, ACTION_USER_REMOVED, ACTION_USER_INFO_CHANGED -> App.getExecutorService().submit(() -> ModuleUtil.getInstance().reloadInstalledModules());
