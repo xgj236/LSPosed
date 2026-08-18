@@ -57,7 +57,34 @@ public class BlurBehindDialogBuilder extends MaterialAlertDialogBuilder {
     public AlertDialog create() {
         AlertDialog dialog = super.create();
         setupWindowBlurListener(dialog);
+        keepWithinScreen(dialog);
         return dialog;
+    }
+
+    /**
+     * A dialog taller than the screen is clipped rather than scrolled, which on a
+     * watch-sized display happens as soon as a title, a message and stacked buttons
+     * are combined. Pinning the window to the screen height makes the message area
+     * give up the excess and scroll instead.
+     */
+    private void keepWithinScreen(AlertDialog dialog) {
+        var window = dialog.getWindow();
+        if (window == null) return;
+        // Not setOnShowListener: the pre-S blur path already owns that callback and a
+        // dialog only keeps one.
+        var decor = window.getDecorView();
+        decor.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                                       int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                int limit = (int) (v.getResources().getDisplayMetrics().heightPixels * 0.95f);
+                if (limit <= 0 || bottom - top <= limit) return;
+                // Detach first: setLayout re-triggers layout, which would otherwise
+                // keep re-entering this listener.
+                v.removeOnLayoutChangeListener(this);
+                window.setLayout(window.getAttributes().width, limit);
+            }
+        });
     }
 
     private void setupWindowBlurListener(AlertDialog dialog) {

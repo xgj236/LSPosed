@@ -91,7 +91,21 @@ public class BaseActivity extends MaterialActivity {
         float fontScale = metrics.scaledDensity / metrics.density;
         metrics.density = density;
         metrics.scaledDensity = density * fontScale;
-        metrics.densityDpi = (int) (density * DisplayMetrics.DENSITY_DEFAULT);
+        metrics.densityDpi = Math.round(density * DisplayMetrics.DENSITY_DEFAULT);
+
+        // Move the configuration's dp extents in step with the density. A window is
+        // sized from the configuration while its content is measured from the
+        // metrics, so leaving the two disagreeing makes dialogs lay out against the
+        // unscaled screen and get clipped. Mutating this Resources in place rather
+        // than deriving a context: the parasitic manager shares its process with
+        // system_server, and handing that process a new configuration context kills
+        // the bridge LSPosed injects there.
+        var configuration = res.getConfiguration();
+        configuration.densityDpi = metrics.densityDpi;
+        configuration.screenWidthDp = Math.round(metrics.widthPixels / density);
+        configuration.screenHeightDp = Math.round(metrics.heightPixels / density);
+        configuration.smallestScreenWidthDp =
+                Math.min(configuration.screenWidthDp, configuration.screenHeightDp);
     }
 
     @Override
