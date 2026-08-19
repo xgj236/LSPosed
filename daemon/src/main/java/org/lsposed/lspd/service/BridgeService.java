@@ -126,11 +126,20 @@ public class BridgeService {
                 return;
             }
 
-            Parcel data = Parcel.obtain();
-            Parcel reply = Parcel.obtain();
             boolean res = false;
             // try at most three times
             for (int i = 0; i < 3; i++) {
+                // Obtain the parcels per attempt rather than once for the whole loop:
+                // recycle() below hands them back to Parcel's process-wide pool, so
+                // reusing the same objects on a later iteration lets another thread
+                // obtain() one of them while this loop is still writing into it. A
+                // parcel handed to an incoming transaction points at a read-only
+                // binder buffer, so the write then faults -- that is the
+                // SEGV_ACCERR in Parcel::writeInterfaceToken that killed the daemon
+                // seconds after boot on devices where the bridge does not answer the
+                // first attempt.
+                Parcel data = Parcel.obtain();
+                Parcel reply = Parcel.obtain();
                 try {
                     data.writeInterfaceToken(DESCRIPTOR);
                     data.writeInt(ACTION.ACTION_SEND_BINDER.ordinal());
