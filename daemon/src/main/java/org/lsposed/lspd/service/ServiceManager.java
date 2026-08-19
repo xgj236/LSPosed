@@ -95,7 +95,14 @@ public class ServiceManager {
     public static void start(String[] args) {
         if (!ConfigFileManager.tryLock()) System.exit(0);
 
-        int systemServerMaxRetry = 1;
+        // One retry is not enough on slow devices: system_server gives up waiting for
+        // the daemon after three seconds, and if the single retry also lands before
+        // the daemon is ready, dispatchSystemServerContext never runs. Everything it
+        // sets up is then missing for the rest of the session -- the flavour shows as
+        // "(???)" and the package receiver that keeps managerUid current is never
+        // registered. Restarting system_server is asynchronous, so extra attempts
+        // cost nothing on devices that succeed the first time.
+        int systemServerMaxRetry = 3;
         for (String arg : args) {
             if (arg.equals("--from-service")) {
                 Log.w(TAG, "LSPosed daemon is not started properly. Try for a late start...");
@@ -148,6 +155,12 @@ public class ServiceManager {
         waitSystemService("activity");
         waitSystemService(Context.USER_SERVICE);
         waitSystemService(Context.APP_OPS_SERVICE);
+
+        // ConfigManager was constructed above, before the package service existed, so
+        // its lookup for the manager package could not have succeeded yet. Ask again
+        // now that pm is up: managerUid has to be known before the manager asks for
+        // its binder, or it starts with an empty module list.
+        configManager.updateManager(false);
 
         ConfigFileManager.reloadConfiguration();
 

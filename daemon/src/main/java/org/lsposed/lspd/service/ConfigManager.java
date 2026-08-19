@@ -99,7 +99,13 @@ public class ConfigManager {
     private boolean enableStatusNotification = true;
     private Path miscPath = null;
 
+    private static final long MANAGER_RESOLVE_INTERVAL = 2000;
+    private static final int MANAGER_RESOLVE_MAX_ATTEMPTS = 60;
+
     private int managerUid = -1;
+    private boolean managerResolved = false;
+    private boolean managerResolveScheduled = false;
+    private int managerResolveAttempts = 0;
 
     private final Handler cacheHandler;
 
@@ -109,7 +115,36 @@ public class ConfigManager {
     private long lastScopeCacheTime = 0;
     private long requestScopeCacheTime = 0;
 
-    private String api = "(???)";
+    /**
+     * Normally handed over by system_server through dispatchSystemServerContext, but
+     * that only happens if the injection wins a boot race, and losing it left the
+     * version reading "(???)" for the whole session. The flavour is knowable locally
+     * -- the daemon runs out of the module directory, whose name carries it -- so
+     * derive it up front and treat the dispatched value as confirmation.
+     */
+    private String api = detectApi();
+
+    private static String detectApi() {
+        try {
+            // .../modules/riru_lsposed/daemon.apk -> riru_lsposed -> Riru
+            // Avoid ConfigFileManager.daemonApkPath: static initializer order makes it
+            // inaccessible here. Read java.class.path directly instead.
+            var daemonPath = System.getProperty("java.class.path", null);
+            if (daemonPath == null) return "(???)";
+            var moduleDir = java.nio.file.Paths.get(daemonPath).getParent();
+            if (moduleDir == null) return "(???)";
+            var moduleId = moduleDir.getFileName().toString();
+            int sep = moduleId.indexOf('_');
+            if (sep > 0) {
+                var name = moduleId.substring(0, sep);
+                // Capitalise to match BuildConfig.FLAVOR (Riru/Zygisk), which
+                // getDenyListPackages() compares against exactly.
+                return Character.toUpperCase(name.charAt(0)) + name.substring(1);
+            }
+        } catch (Throwable ignored) {
+        }
+        return "(???)";
+    }
 
     static class ProcessScope {
         final String processName;
@@ -303,19 +338,61 @@ public class ConfigManager {
     public synchronized void updateManager(boolean uninstalled) {
         if (uninstalled) {
             managerUid = -1;
+            managerResolved = true;
             return;
         }
-        if (!PackageService.isAlive()) return;
+        if (!PackageService.isAlive()) {
+            // Too early in boot to ask. Come back on the cache thread instead of
+            // settling on -1: a daemon that starts before the package service used to
+            // keep managerUid at -1 for the whole session, so the manager never got
+            // its binder and showed an empty module list with no way to recover.
+            scheduleManagerResolve();
+            return;
+        }
         try {
             PackageInfo info = PackageService.getPackageInfo(BuildConfig.DEFAULT_MANAGER_PACKAGE_NAME, 0, 0);
-            if (info != null) {
-                managerUid = info.applicationInfo.uid;
-            } else {
-                managerUid = -1;
-                Log.i(TAG, "manager is not installed");
+            // Log only transitions: getInstance() re-runs this for every app fork
+            // until the caches are warm, so logging unconditionally buries the boot
+            // log in a burst of identical lines.
+            int uid = info != null ? info.applicationInfo.uid : -1;
+            if (uid != managerUid) {
+                Log.i(TAG, uid != -1 ? "manager uid is " + uid : "manager is not installed");
+                managerUid = uid;
             }
+            managerResolved = true;
         } catch (RemoteException ignored) {
+            // Transient; try again shortly rather than settling on -1.
+            scheduleManagerResolve();
         }
+    }
+
+    /**
+     * Retry {@link #updateManager(boolean)} on the cache thread until one query
+     * actually completes.
+     * <p>
+     * The retry has to stay off the binder threads. {@link #isManager(int)} is called
+     * while forking every app, with a system_server thread blocked inside a
+     * transaction to us; querying the package service from there is a re-entrant
+     * binder call, which is both slow on the fork path and a way to crash the daemon.
+     * The cache thread is an ordinary HandlerThread, so it can block safely.
+     */
+    private void scheduleManagerResolve() {
+        if (managerResolveScheduled) return;
+        managerResolveScheduled = true;
+        cacheHandler.postDelayed(this::resolveManager, MANAGER_RESOLVE_INTERVAL);
+    }
+
+    private void resolveManager() {
+        synchronized (this) {
+            managerResolveScheduled = false;
+            if (managerResolved) return;
+            if (++managerResolveAttempts > MANAGER_RESOLVE_MAX_ATTEMPTS) {
+                Log.w(TAG, "giving up on resolving the manager package");
+                return;
+            }
+        }
+        // Falls through to scheduleManagerResolve() again if it still cannot ask.
+        updateManager(false);
     }
 
     static ConfigManager getInstance() {
@@ -1084,6 +1161,11 @@ public class ConfigManager {
         return true;
     }
 
+    // Deliberately a plain field read: this runs on the app-fork path, where the
+    // caller is a system_server thread blocked inside a transaction to us. Querying
+    // the package service from here would be a re-entrant binder call on every fork.
+    // The retry that keeps managerUid current lives on the cache thread instead --
+    // see resolveManager().
     public boolean isManager(int uid) {
         return uid == managerUid;
     }
