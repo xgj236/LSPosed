@@ -250,6 +250,21 @@ public class App extends Application {
         }, intentFilter, Context.RECEIVER_NOT_EXPORTED);
 
         UpdateUtil.loadRemoteVersion();
+
+        // Kick the first module load off onCreate rather than relying solely on the
+        // idle handler in the static block: an idle handler only runs once the main
+        // queue actually goes idle, so a process that is launched and immediately
+        // paused (the launcher shortcut on this watch does exactly that) could reach
+        // the module list with ModuleUtil never constructed, i.e. an empty list that
+        // nothing retries. getInstance() is idempotent, so a later idle run is a no-op.
+        App.getExecutorService().submit(() -> {
+            try {
+                ModuleUtil.getInstance();
+                RepoLoader.getInstance();
+            } catch (Throwable t) {
+                Log.e(TAG, "Initial module load failed", t);
+            }
+        });
     }
 
     @NonNull

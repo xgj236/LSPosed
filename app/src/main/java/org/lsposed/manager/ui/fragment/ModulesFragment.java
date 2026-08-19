@@ -30,6 +30,7 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Process;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
@@ -130,6 +131,19 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
         for (var i = 0; i < snapshot.size(); ++i) {
             action.accept(snapshot.valueAt(i));
         }
+    }
+
+    /**
+     * Stand-in for the user list while the manager service has not answered yet, so the
+     * pager always has one page and therefore one pull-to-refresh target. Its id matches
+     * the user the manager itself runs as, which is the only user we can name without
+     * the service.
+     */
+    private UserInfo currentUserPlaceholder() {
+        var user = new UserInfo();
+        user.id = Process.myUid() / App.PER_USER_RANGE;
+        user.name = "";
+        return user;
     }
 
     private void showFab() {
@@ -234,7 +248,14 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
     @Override
     public void onModulesReloaded() {
         var users = moduleUtil.getUsers();
-        if (users == null) return;
+        if (users == null) {
+            // The first module load has not succeeded yet. Leaving adapters empty makes
+            // the pager render zero pages, so there is no list *and* no
+            // SwipeRefreshLayout to pull on -- the user is stuck looking at a blank
+            // screen with no way to retry. Fall back to a single page for the current
+            // user; a later successful reload replaces it with the real user list.
+            users = List.of(currentUserPlaceholder());
+        }
 
         if (users.size() != 1) {
             binding.viewPager.setUserInputEnabled(true);
@@ -363,7 +384,11 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
         private final RecyclerView.AdapterDataObserver observer = new RecyclerView.AdapterDataObserver() {
             @Override
             public void onChanged() {
-                binding.swipeRefreshLayout.setRefreshing(!adapter.isLoaded());
+                // Driven by whether a reload is actually running. Deriving it from
+                // isLoaded() left the spinner up forever whenever a load did not
+                // succeed, and SwipeRefreshLayout ignores new drags while it believes
+                // it is already refreshing -- so an empty list could not be pulled.
+                binding.swipeRefreshLayout.setRefreshing(adapter.isRefreshing());
             }
         };
 
@@ -499,6 +524,7 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
         private final UserInfo user;
         private final boolean isPick;
         private boolean isLoaded;
+        private boolean refreshing = true;
         private View.OnClickListener onPickListener;
 
         ModuleAdapter(UserInfo user) {
@@ -677,20 +703,38 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
         }
 
         public void refresh() {
+            setRefreshing(true);
             runAsync(reloadModules);
         }
 
         public void fullRefresh() {
+            setRefreshing(true);
             runAsync(() -> {
                 setLoaded(null, false);
                 moduleUtil.reloadInstalledModules();
-                refresh();
+                runAsync(reloadModules);
             });
+        }
+
+        private void setRefreshing(boolean value) {
+            runOnUiThread(() -> {
+                refreshing = value;
+                notifyDataSetChanged();
+            });
+        }
+
+        public boolean isRefreshing() {
+            return refreshing;
         }
 
         private final Runnable reloadModules = () -> {
             var modules = moduleUtil.getModules();
-            if (modules == null) return;
+            if (modules == null) {
+                // No usable state yet. ModuleUtil retries on its own; end this attempt
+                // so the spinner stops and the user can pull to retry as well.
+                setRefreshing(false);
+                return;
+            }
             Comparator<PackageInfo> cmp = AppHelper.getAppListComparator(0, pm);
             setLoaded(null, false);
             var tmpList = new ArrayList<ModuleUtil.InstalledModule>();
@@ -737,6 +781,8 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
             runOnUiThread(() -> {
                 if (list != null) showList = list;
                 isLoaded = loaded;
+                // Results published means the attempt that asked for them is over.
+                if (loaded) refreshing = false;
                 notifyDataSetChanged();
             });
         }

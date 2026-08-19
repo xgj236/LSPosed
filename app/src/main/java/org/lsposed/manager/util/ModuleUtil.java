@@ -66,6 +66,9 @@ public final class ModuleUtil {
     private List<UserInfo> users = Collections.emptyList();
     private Map<Pair<String, Integer>, InstalledModule> installedModules = Collections.emptyMap();
     private boolean modulesLoaded = false;
+    private int reloadAttempt = 0;
+
+    private static final int MAX_RELOAD_ATTEMPTS = 5;
 
     static final int MATCH_ANY_USER = 0x00400000; // PackageManager.MATCH_ANY_USER
 
@@ -83,6 +86,7 @@ public final class ModuleUtil {
 
     public static synchronized ModuleUtil getInstance() {
         if (instance == null) {
+            Log.i(App.TAG, "ModuleUtil first use, scheduling initial load");
             instance = new ModuleUtil();
             App.getExecutorService().submit(instance::reloadInstalledModules);
         }
@@ -132,15 +136,35 @@ public final class ModuleUtil {
         return info.metaData != null && info.metaData.containsKey("xposedminversion");
     }
 
-    public synchronized void reloadInstalledModules() {
+    /**
+     * Wrapper around {@link #doReloadInstalledModules()} that reports failures.
+     * Reloads run through {@code ExecutorService.submit()}, which stores a thrown
+     * exception in the Future and never prints it -- so any failure in here used to
+     * leave an empty module list with no trace of why anywhere in the log.
+     */
+    public void reloadInstalledModules() {
+        try {
+            doReloadInstalledModules();
+        } catch (Throwable t) {
+            Log.e(App.TAG, "Module reload threw", t);
+        }
+    }
+
+    private synchronized void doReloadInstalledModules() {
+        // These outcomes are logged at INFO on purpose: release builds strip Log.d
+        // via -assumenosideeffects, so a debug-level message here is invisible in
+        // exactly the builds where an empty module list needs diagnosing.
+        Log.i(App.TAG, "Module reload starting");
         if (!ConfigManager.isBinderAlive()) {
-            Log.d(App.TAG, "Module reload deferred: manager service is not ready");
+            Log.i(App.TAG, "Module reload deferred: manager service is not ready");
+            retryReload();
             return;
         }
 
         var state = ConfigManager.getModuleState(PackageManager.GET_META_DATA | MATCH_ALL_FLAGS);
         if (state == null) {
             Log.w(App.TAG, "Module reload failed: retaining previous module state");
+            retryReload();
             return;
         }
 
@@ -159,9 +183,35 @@ public final class ModuleUtil {
             users = Collections.unmodifiableList(new ArrayList<>(state.users));
             enabledModules = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(state.enabledModules)));
             modulesLoaded = true;
+            reloadAttempt = 0;
         }
-        Log.d(App.TAG, "Module reload completed: " + modules.size() + " modules");
+        Log.i(App.TAG, "Module reload completed: " + modules.size() + " modules");
         listeners.forEach(ModuleListener::onModulesReloaded);
+    }
+
+    /**
+     * A reload that gives up silently leaves the list empty until something else
+     * happens to trigger another one, which is why the module list would sometimes
+     * never appear. Nothing retries on our behalf: the binder-ready callback fires
+     * once, and package events only arrive if a package actually changes.
+     */
+    private void retryReload() {
+        int attempt;
+        synchronized (moduleLock) {
+            if (modulesLoaded || reloadAttempt >= MAX_RELOAD_ATTEMPTS) return;
+            attempt = ++reloadAttempt;
+        }
+        long delay = 500L * attempt;
+        Log.i(App.TAG, "Retrying module reload in " + delay + "ms (attempt " + attempt + ")");
+        App.getExecutorService().submit(() -> {
+            try {
+                Thread.sleep(delay);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            reloadInstalledModules();
+        });
     }
 
     @Nullable
