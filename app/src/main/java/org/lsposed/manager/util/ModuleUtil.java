@@ -36,6 +36,7 @@ import androidx.core.util.Pair;
 import org.lsposed.lspd.models.UserInfo;
 import org.lsposed.manager.App;
 import org.lsposed.manager.ConfigManager;
+import org.lsposed.manager.adapters.ScopeAdapter;
 import org.lsposed.manager.repo.RepoLoader;
 import org.lsposed.manager.repo.model.OnlineModule;
 
@@ -316,12 +317,36 @@ public final class ModuleUtil {
             var updatedEnabledModules = new HashSet<>(enabledModules);
             if (enabled) {
                 updatedEnabledModules.add(packageName);
+                // Auto-add the module itself to its scope so its UI can detect Xposed.
+                // Without this, a freshly-enabled module shows "not activated" in its
+                // own settings because XposedBridge APIs are unavailable in processes
+                // outside the scope.
+                autoAddModuleToOwnScope(packageName);
             } else {
                 updatedEnabledModules.remove(packageName);
             }
             enabledModules = Collections.unmodifiableSet(updatedEnabledModules);
         }
         return true;
+    }
+
+    private void autoAddModuleToOwnScope(String packageName) {
+        try {
+            var currentScope = ConfigManager.getModuleScope(packageName);
+            if (currentScope == null) currentScope = new ArrayList<>();
+
+            var scopeSet = new HashSet<>(currentScope);
+            var selfApp = new ScopeAdapter.ApplicationWithEquals(packageName, 0);
+
+            // Only add if not already present
+            if (!scopeSet.contains(selfApp)) {
+                scopeSet.add(selfApp);
+                ConfigManager.setModuleScope(packageName, false, scopeSet);
+                Log.i(App.TAG, "Auto-added " + packageName + " to its own scope");
+            }
+        } catch (Throwable t) {
+            Log.w(App.TAG, "Failed to auto-add module to own scope: " + packageName, t);
+        }
     }
 
     public boolean isModuleEnabled(String packageName) {
