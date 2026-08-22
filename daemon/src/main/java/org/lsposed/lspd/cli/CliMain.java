@@ -46,6 +46,15 @@ import java.util.List;
 public class CliMain {
     // Keep in sync with CommandListener.SOCKET_NAME.
     private static final String SOCKET_NAME = "lspd_ctl";
+    /**
+     * Largest request the daemon will read, mirroring
+     * {@code CommandListener.MAX_REQUEST_BYTES} (1024 + 512 * (255 + 8)).
+     *
+     * <p>Held as a copy rather than an import for the same reason as {@code SOCKET_NAME}: this
+     * class speaks only the wire protocol and pulls in no daemon service classes.
+     * {@code CliRequestLimitTest} fails if the two values drift apart.</p>
+     */
+    static final int MAX_REQUEST_BYTES = 1024 + 512 * (255 + 8);
 
     public static void main(String[] args) {
         PrintStream out = System.out;
@@ -62,6 +71,23 @@ public class CliMain {
         } catch (IllegalArgumentException e) {
             err.println("error: " + e.getMessage());
             printUsage(err);
+            System.exit(2);
+            return;
+        }
+
+        // Check the size here rather than letting the daemon refuse it. The daemon does refuse
+        // it, and says exactly why, but it has to close the socket to do so -- and closing while
+        // the rest of this request is still unread resets the connection, which discards the
+        // reply already sitting in our receive buffer. What the user saw was "cannot talk to
+        // LSPosed daemon: Connection reset by peer" and a hint to check whether LSPosed was
+        // running, for a daemon that was healthy and had answered correctly. The daemon now
+        // drains before closing, but a local limit error is still the better diagnosis: it names
+        // the actual problem and costs no round trip.
+        int size = request.getBytes(StandardCharsets.UTF_8).length;
+        if (size > MAX_REQUEST_BYTES) {
+            err.println("error: request is " + size + " bytes, over the daemon's "
+                    + MAX_REQUEST_BYTES + " byte limit");
+            err.println("hint: split the --scope list into smaller batches");
             System.exit(2);
             return;
         }

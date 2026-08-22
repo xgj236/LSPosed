@@ -122,4 +122,6 @@ dependencies {
     implementation(projects.services.managerService)
     compileOnly(libs.androidx.annotation)
     compileOnly(projects.hiddenapi.stubs)
+
+    testImplementation(libs.junit)
 }
