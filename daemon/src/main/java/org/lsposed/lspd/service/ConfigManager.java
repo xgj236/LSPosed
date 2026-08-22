@@ -90,7 +90,9 @@ import java.util.zip.ZipOutputStream;
 import hidden.HiddenApiBridge;
 
 public class ConfigManager {
-    private static ConfigManager instance = null;
+    // volatile because getInstance() publishes it with double-checked locking.
+    private static volatile ConfigManager instance = null;
+    private static final Object INSTANCE_LOCK = new Object();
 
     private final SQLiteDatabase db = openDb();
 
@@ -102,9 +104,31 @@ public class ConfigManager {
     private static final long MANAGER_RESOLVE_INTERVAL = 2000;
     private static final int MANAGER_RESOLVE_MAX_ATTEMPTS = 60;
 
-    private int managerUid = -1;
-    private boolean managerResolved = false;
-    private boolean managerResolveScheduled = false;
+    /**
+     * Where the manager's uid lookup stands.
+     * <p>
+     * {@link #ABSENT} is a real answer -- "the manager is not installed" -- rather than a
+     * failure, so it ends the retry run exactly like {@link #RESOLVED} does. A package event for
+     * the manager, or any other caller asking again, re-arms the retry budget from a terminal
+     * state, which is what lets a manager installed hours after boot still be found.
+     */
+    private enum ManagerState {
+        /** Never asked, or a previous answer was superseded. A retry may be scheduled. */
+        UNRESOLVED,
+        /** A retry is already queued on the cache thread; do not queue a second one. */
+        RESOLVING,
+        /** A query completed and the manager is installed. */
+        RESOLVED,
+        /** A query completed and the manager is not installed. */
+        ABSENT,
+    }
+
+    // Read without the monitor from isManager() on the app-fork path, so the write has to
+    // publish; see the comment on isManager().
+    private volatile int managerUid = -1;
+    private ManagerState managerState = ManagerState.UNRESOLVED;
+    // Counts *consecutive* failures, not lifetime attempts: it is reset whenever a query
+    // completes and whenever a fresh resolve run starts.
     private int managerResolveAttempts = 0;
 
     private final Handler cacheHandler;
@@ -335,10 +359,21 @@ public class ConfigManager {
         cacheHandler.post(this::getPreloadDex);
     }
 
+    /**
+     * Refreshes the manager's uid. Called once at boot, from {@link #getInstance()} until the
+     * caches are warm, and from the package receiver whenever the manager package changes.
+     */
     public synchronized void updateManager(boolean uninstalled) {
+        if (managerState == ManagerState.RESOLVED || managerState == ManagerState.ABSENT) {
+            // A new answer is being sought after a previous one settled, so this starts a fresh
+            // resolve run and gets a fresh budget. Without this the counter only ever went up,
+            // and once it passed the cap the daemon could never resolve a manager again -- not
+            // even one installed minutes later.
+            managerResolveAttempts = 0;
+        }
         if (uninstalled) {
             managerUid = -1;
-            managerResolved = true;
+            managerState = ManagerState.ABSENT;
             return;
         }
         if (!PackageService.isAlive()) {
@@ -359,9 +394,14 @@ public class ConfigManager {
                 Log.i(TAG, uid != -1 ? "manager uid is " + uid : "manager is not installed");
                 managerUid = uid;
             }
-            managerResolved = true;
+            managerState = uid != -1 ? ManagerState.RESOLVED : ManagerState.ABSENT;
+            managerResolveAttempts = 0;
         } catch (RemoteException ignored) {
-            // Transient; try again shortly rather than settling on -1.
+            // Transient. Keep the last known uid so the fork path keeps working, but leave the
+            // state non-terminal so the retry below actually runs: the previous code left the
+            // "resolved" flag set here, which turned every subsequent retry into an immediate
+            // no-op and froze managerUid at whatever it happened to be.
+            managerState = ManagerState.UNRESOLVED;
             scheduleManagerResolve();
         }
     }
@@ -376,41 +416,65 @@ public class ConfigManager {
      * binder call, which is both slow on the fork path and a way to crash the daemon.
      * The cache thread is an ordinary HandlerThread, so it can block safely.
      */
+    /** Must be called with this monitor held, so two threads cannot queue two retry chains. */
     private void scheduleManagerResolve() {
-        if (managerResolveScheduled) return;
-        managerResolveScheduled = true;
+        if (managerState == ManagerState.RESOLVING) return;
+        managerState = ManagerState.RESOLVING;
         cacheHandler.postDelayed(this::resolveManager, MANAGER_RESOLVE_INTERVAL);
     }
 
     private void resolveManager() {
         synchronized (this) {
-            managerResolveScheduled = false;
-            if (managerResolved) return;
-            if (++managerResolveAttempts > MANAGER_RESOLVE_MAX_ATTEMPTS) {
-                Log.w(TAG, "giving up on resolving the manager package");
+            if (managerState != ManagerState.RESOLVING) {
+                // Someone got an answer while this retry sat in the queue, or the manager was
+                // uninstalled outright. Either way there is nothing left to resolve.
                 return;
             }
+            if (++managerResolveAttempts > MANAGER_RESOLVE_MAX_ATTEMPTS) {
+                Log.w(TAG, "giving up on resolving the manager package after "
+                        + managerResolveAttempts + " attempts; managerUid stays " + managerUid);
+                // Park on whatever is actually known instead of on UNRESOLVED: a terminal state
+                // is what re-arms the budget, so a later package event can try again.
+                managerState = managerUid != -1 ? ManagerState.RESOLVED : ManagerState.ABSENT;
+                return;
+            }
+            // Leave RESOLVING so updateManager() below is free to re-arm it if it still cannot ask.
+            managerState = ManagerState.UNRESOLVED;
         }
         // Falls through to scheduleManagerResolve() again if it still cannot ask.
         updateManager(false);
     }
 
     static ConfigManager getInstance() {
-        if (instance == null)
-            instance = new ConfigManager();
+        // Construction has to be exclusive: two ConfigManagers would mean two cache
+        // HandlerThreads and two connections to the same database, and whichever one lost the
+        // race would keep serving stale caches to whoever held a reference to it. Only the
+        // construction is guarded -- warming the caches below takes the instance monitor, and
+        // holding a second lock across that would deadlock against any thread that already holds
+        // the instance monitor and then asks for the instance.
+        ConfigManager local = instance;
+        if (local == null) {
+            synchronized (INSTANCE_LOCK) {
+                local = instance;
+                if (local == null) {
+                    local = new ConfigManager();
+                    instance = local;
+                }
+            }
+        }
         boolean needCached;
-        synchronized (instance.cacheHandler) {
-            needCached = instance.lastModuleCacheTime == 0 || instance.lastScopeCacheTime == 0;
+        synchronized (local.cacheHandler) {
+            needCached = local.lastModuleCacheTime == 0 || local.lastScopeCacheTime == 0;
         }
         if (needCached) {
             if (PackageService.isAlive() && UserService.isAlive()) {
                 Log.d(TAG, "pm & um are ready, updating cache");
                 // must ensure cache is valid for later usage
-                instance.updateCaches(true);
-                instance.updateManager(false);
+                local.updateCaches(true);
+                local.updateManager(false);
             }
         }
-        return instance;
+        return local;
     }
 
     private ConfigManager() {
@@ -1061,6 +1125,203 @@ public class ConfigManager {
         }
     }
 
+    /**
+     * Enables a module and adds the module's own package to its scope in one transaction.
+     * <p>
+     * A module detects Xposed through XposedBridge APIs, and those only exist inside processes
+     * the module was actually loaded into -- so a freshly enabled module reports "not activated"
+     * in its own settings until its own package is in its scope. Both writes belong here, in the
+     * daemon, for three reasons: the manager and the CLI then share one code path, the insert is
+     * idempotent so every other hook target survives untouched (a read-modify-replace through
+     * two binder calls could drop them all), and a failure leaves the database and the caches on
+     * their previous state because nothing is refreshed until the transaction has committed.
+     *
+     * @return true once the module is enabled and scoped to itself; false leaves state unchanged.
+     */
+    public synchronized boolean enableModuleWithSelfScope(String packageName) throws RemoteException {
+        if (packageName == null || packageName.equals("lspd")) return false;
+
+        // Everything that cannot run inside a transaction goes first: PackageService is a binder
+        // call, and both updateModuleApkPath() and getModuleId() refuse to run in a transaction.
+        var pkgInfos = PackageService.getPackageInfoFromAllUsers(packageName, PackageService.MATCH_ALL_FLAGS);
+        if (pkgInfos.isEmpty()) return false;
+        var pkgInfo = pkgInfos.values().stream().findFirst().orElse(null);
+        if (pkgInfo == null || pkgInfo.applicationInfo == null) return false;
+        var modulePath = getModuleApkPath(pkgInfo.applicationInfo);
+        if (modulePath == null) return false;
+        // force = true: this method refreshes the caches itself, once, after the commit.
+        updateModuleApkPath(packageName, modulePath, true);
+        int mid = getModuleId(packageName);
+        if (mid == -1) return false;
+
+        // The real user ids the module is installed for, not a hardcoded 0. A module installed
+        // for a secondary user needs its scope row there, or its UI is never injected.
+        var userIds = new ArrayList<Integer>();
+        pkgInfos.forEach((userId, info) -> {
+            if (info != null && info.applicationInfo != null) userIds.add(userId);
+        });
+        if (userIds.isEmpty()) return false;
+
+        boolean committed = executeInTransaction(() -> {
+            ContentValues enabled = new ContentValues();
+            enabled.put("enabled", 1);
+            // SQLite counts every row the WHERE clause matched, so re-enabling an already
+            // enabled module still reports success instead of a spurious failure.
+            if (db.update("modules", enabled, "mid = ?", new String[]{String.valueOf(mid)}) <= 0) {
+                return false; // the row disappeared between getModuleId() and here
+            }
+            for (int userId : userIds) {
+                ContentValues scope = new ContentValues();
+                scope.put("mid", mid);
+                scope.put("app_pkg_name", packageName);
+                scope.put("user_id", userId);
+                // CONFLICT_IGNORE returns -1 for a row that is already there, which is the
+                // success case for us -- so confirm by reading it back rather than by the
+                // insert's return value.
+                db.insertWithOnConflict("scope", null, scope, SQLiteDatabase.CONFLICT_IGNORE);
+                if (!hasScope(mid, packageName, userId)) return false;
+            }
+            return true;
+        });
+        if (!committed) {
+            Log.w(TAG, "failed to enable " + packageName + " with self scope");
+            return false;
+        }
+        // Refresh once, and only after the commit.
+        updateCaches(false);
+        return true;
+    }
+
+    /** Whether the daemon has a row for this module at all, enabled or not. */
+    public synchronized boolean isModuleRegistered(String packageName) {
+        return packageName != null && !packageName.equals("lspd") && getModuleId(packageName) != -1;
+    }
+
+    private boolean hasScope(int mid, String scopePackageName, int userId) {
+        try (Cursor cursor = db.query("scope", new String[]{"mid"},
+                "mid = ? AND app_pkg_name = ? AND user_id = ?",
+                new String[]{String.valueOf(mid), scopePackageName, String.valueOf(userId)},
+                null, null, null)) {
+            return cursor != null && cursor.getCount() > 0;
+        }
+    }
+
+    /**
+     * Applies a whole scope batch in one transaction: optionally enabling the module and adding
+     * its own package, optionally clearing the previous scope, then adding or removing every
+     * target given. Either all of it commits or none of it does, and the caches are refreshed
+     * exactly once, after the commit -- never before, and never on a failure.
+     * <p>
+     * Every target is validated before the first write, so an invalid entry halfway down the
+     * list can no longer leave the earlier ones applied while the command reports an error.
+     *
+     * @param scopes  targets to add, or to remove when {@code remove} is set
+     * @param enable  also enable the module and scope it to itself
+     * @param replace drop the module's existing scope first (ignored when {@code remove})
+     * @param remove  remove the given targets instead of adding them
+     * @return null on success, otherwise a human-readable reason nothing was changed
+     */
+    public synchronized String applyScopeBatch(String packageName, List<Application> scopes,
+                                               boolean enable, boolean replace, boolean remove)
+            throws RemoteException {
+        if (packageName == null || packageName.isEmpty()) return "no module package given";
+        if (packageName.equals("lspd")) return "lspd is not a module";
+        if (scopes == null) return "no scope given";
+
+        // Validate the complete request before touching the database.
+        for (Application app : scopes) {
+            if (app == null || app.packageName == null || app.packageName.isEmpty()) {
+                return "empty scope package";
+            }
+            if (app.userId < 0) {
+                return "invalid user id " + app.userId + " for " + app.packageName;
+            }
+            if (app.packageName.equals("system") && app.userId != 0) {
+                return "the system scope is only valid for user 0";
+            }
+        }
+
+        // Then the work that cannot happen inside a transaction: PackageService is a binder
+        // call, and updateModuleApkPath()/getModuleId() both refuse to run in one.
+        var selfUsers = new ArrayList<Integer>();
+        if (enable) {
+            var pkgInfos = PackageService.getPackageInfoFromAllUsers(packageName, PackageService.MATCH_ALL_FLAGS);
+            PackageInfo pkgInfo = null;
+            for (var entry : pkgInfos.entrySet()) {
+                var info = entry.getValue();
+                if (info == null || info.applicationInfo == null) continue;
+                if (pkgInfo == null) pkgInfo = info;
+                selfUsers.add(entry.getKey());
+            }
+            if (pkgInfo == null) return packageName + " is not installed";
+            var modulePath = getModuleApkPath(pkgInfo.applicationInfo);
+            if (modulePath == null) {
+                return packageName + " has no readable module APK (is it an Xposed module?)";
+            }
+            // force = true: the cache refresh below is the only one this batch performs.
+            updateModuleApkPath(packageName, modulePath, true);
+        }
+        int mid = getModuleId(packageName);
+        if (mid == -1) return packageName + " is not registered as a module";
+
+        var failure = new String[1];
+        boolean committed = executeInTransaction(() -> {
+            if (enable) {
+                ContentValues enabled = new ContentValues();
+                enabled.put("enabled", 1);
+                if (db.update("modules", enabled, "mid = ?", new String[]{String.valueOf(mid)}) <= 0) {
+                    failure[0] = packageName + " lost its module row while being written";
+                    return false;
+                }
+            }
+            if (replace && !remove) {
+                db.delete("scope", "mid = ?", new String[]{String.valueOf(mid)});
+            }
+            var targets = new ArrayList<Application>(scopes);
+            if (enable) {
+                // Re-added after a replace, so activating a module never costs it the scope
+                // row its own settings UI needs.
+                for (int userId : selfUsers) {
+                    var self = new Application();
+                    self.packageName = packageName;
+                    self.userId = userId;
+                    targets.add(self);
+                }
+            }
+            for (Application app : targets) {
+                if (remove) {
+                    db.delete("scope", "mid = ? AND app_pkg_name = ? AND user_id = ?",
+                            new String[]{String.valueOf(mid), app.packageName, String.valueOf(app.userId)});
+                    if (hasScope(mid, app.packageName, app.userId)) {
+                        failure[0] = "could not remove " + app.packageName + "/" + app.userId;
+                        return false;
+                    }
+                } else {
+                    ContentValues values = new ContentValues();
+                    values.put("mid", mid);
+                    values.put("app_pkg_name", app.packageName);
+                    values.put("user_id", app.userId);
+                    // CONFLICT_IGNORE returns -1 for a row that is already present, which is
+                    // success here, so the write is confirmed by reading it back.
+                    db.insertWithOnConflict("scope", null, values, SQLiteDatabase.CONFLICT_IGNORE);
+                    if (!hasScope(mid, app.packageName, app.userId)) {
+                        failure[0] = "could not add " + app.packageName + "/" + app.userId;
+                        return false;
+                    }
+                }
+            }
+            return true;
+        });
+        if (!committed) {
+            var reason = failure[0] == null ? "database write failed" : failure[0];
+            Log.w(TAG, "scope batch for " + packageName + " rolled back: " + reason);
+            return reason;
+        }
+        // One refresh, after the commit.
+        updateCaches(false);
+        return null;
+    }
+
     public void updateCache() {
         // Called by oneway binder
         updateCaches(true);
@@ -1161,11 +1422,13 @@ public class ConfigManager {
         return true;
     }
 
-    // Deliberately a plain field read: this runs on the app-fork path, where the
-    // caller is a system_server thread blocked inside a transaction to us. Querying
-    // the package service from here would be a re-entrant binder call on every fork.
-    // The retry that keeps managerUid current lives on the cache thread instead --
-    // see resolveManager().
+    // Deliberately an unsynchronised read: this runs on the app-fork path, where the caller is a
+    // system_server thread blocked inside a transaction to us. Querying the package service from
+    // here would be a re-entrant binder call on every fork, and taking this monitor would let one
+    // slow database write stall every app launch. managerUid is volatile precisely so this read
+    // still sees the cache thread's write -- as a plain field it could stay stale for the rest of
+    // the session, which shows up as the manager never being recognised. The retry that keeps
+    // managerUid current lives on the cache thread instead -- see resolveManager().
     public boolean isManager(int uid) {
         return uid == managerUid;
     }

@@ -396,6 +396,11 @@ public class LSPManagerService extends ILSPManagerService.Stub {
     }
 
     @Override
+    public boolean enableModuleWithSelfScope(String packageName) throws RemoteException {
+        return ConfigManager.getInstance().enableModuleWithSelfScope(packageName);
+    }
+
+    @Override
     public boolean setModuleScope(String packageName, List<Application> scope) throws RemoteException {
         return ConfigManager.getInstance().setModuleScope(packageName, scope);
     }

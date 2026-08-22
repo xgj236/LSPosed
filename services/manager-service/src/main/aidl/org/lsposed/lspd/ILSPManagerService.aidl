@@ -87,4 +87,10 @@ interface ILSPManagerService {
     boolean enableStatusNotification() = 47;
 
     void setEnableStatusNotification(boolean enable) = 48;
+
+    /**
+     * Enables a module and adds its own package to its scope in one daemon-side transaction,
+     * preserving every existing hook target. Manager and CLI share this operation.
+     */
+    boolean enableModuleWithSelfScope(String packageName) = 49;
 }

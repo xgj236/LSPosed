@@ -130,7 +130,12 @@ public class ConfigManager {
 
     public static boolean setModuleEnabled(String packageName, boolean enable) {
         try {
-            return enable ? LSPManagerServiceHolder.getService().enableModule(packageName) : LSPManagerServiceHolder.getService().disableModule(packageName);
+            var service = LSPManagerServiceHolder.getService();
+            if (!enable) return service.disableModule(packageName);
+            // Enabling also puts the module's own package in its scope, so its settings UI can
+            // see Xposed. The daemon does both writes in one transaction; doing it here over two
+            // binder calls could replace every existing hook target with just the module itself.
+            return service.enableModuleWithSelfScope(packageName);
         } catch (RemoteException e) {
             Log.e(App.TAG, Log.getStackTraceString(e));
             return false;
