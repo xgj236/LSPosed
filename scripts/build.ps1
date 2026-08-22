@@ -168,12 +168,40 @@ if (-not (Test-Path (Join-Path $Root 'external/lsplant/README.md'))) {
 $DepsMarker = Join-Path $DepsDir '.published'
 $DepsStamp = "api=$ApiCommit service=$ServiceTag+$ServiceAidlCommit"
 
+# The published artifacts live in the Maven local repository, which is outside the tree the
+# marker travels in. A .deps/ copied from another machine therefore arrives with a marker
+# claiming work that was never done here, and the build then fails deep inside dependency
+# resolution with nothing pointing back to the stale stamp. Require the artifacts themselves.
+$MavenLocal = if ($env:MAVEN_REPO_LOCAL) { $env:MAVEN_REPO_LOCAL }
+              else { Join-Path $env:USERPROFILE '.m2/repository' }
+# Forward slashes on purpose: PowerShell accepts them on Windows, and they survive being
+# copied between shells and editors intact, unlike a path full of escapes.
+$DepsArtifacts = @(
+    'io/github/libxposed/api/100/api-100.aar'
+    'io/github/libxposed/api/100/api-100.pom'
+    'io/github/libxposed/interface/100/interface-100.aar'
+    'io/github/libxposed/interface/100/interface-100.pom'
+) | ForEach-Object { Join-Path $MavenLocal $_ }
+
 if ($ForceDeps -and (Test-Path $DepsDir)) {
     Write-Step 'ForceDeps set, discarding cached dependencies'
     Remove-Item -Recurse -Force $DepsDir
 }
 
-$depsCurrent = (Test-Path $DepsMarker) -and ((Get-Content -Raw $DepsMarker).Trim() -eq $DepsStamp)
+# Trim a UTF-8 BOM as well as whitespace: Windows PowerShell 5.1's Set-Content -Encoding utf8
+# used to write one here, and build.sh could not match it. Both scripts now write the bare
+# stamp, and both read tolerantly so an older marker still compares equal.
+$depsStampOnDisk = if (Test-Path $DepsMarker) {
+    (Get-Content -Raw $DepsMarker).TrimStart([char]0xFEFF).Trim()
+} else { $null }
+
+$missingArtifacts = @($DepsArtifacts | Where-Object { -not (Test-Path $_) })
+$depsCurrent = ($depsStampOnDisk -eq $DepsStamp) -and ($missingArtifacts.Count -eq 0)
+
+if (($depsStampOnDisk -eq $DepsStamp) -and ($missingArtifacts.Count -gt 0)) {
+    Write-Step "Marker is current but $($missingArtifacts.Count) artifact(s) are missing from $MavenLocal; re-publishing"
+    foreach ($m in $missingArtifacts) { Write-Host "  missing: $m" }
+}
 
 if ($depsCurrent) {
     Write-Step "libxposed dependencies already published ($DepsStamp)"
@@ -233,7 +261,10 @@ else {
     try { Invoke-Checked 'publish interface' { & '.\gradlew.bat' :interface:publishToMavenLocal } }
     finally { Pop-Location }
 
-    Set-Content -Path $DepsMarker -Value $DepsStamp -Encoding utf8
+    # WriteAllText with a BOM-less encoding, not Set-Content -Encoding utf8: on Windows
+    # PowerShell 5.1 the latter prepends a UTF-8 BOM and appends CRLF, which build.sh could
+    # never match, so a bash build after a PowerShell build always re-published from scratch.
+    [System.IO.File]::WriteAllText($DepsMarker, $DepsStamp, (New-Object System.Text.UTF8Encoding $false))
 }
 
 # --- LSPosed ---------------------------------------------------------------
@@ -269,4 +300,21 @@ if ($Flavor -eq 'all') {
         Write-Host ''
         Write-Host 'Skipping parity check (needs bash; it ships with Git for Windows).' -ForegroundColor Yellow
     }
+}
+
+# Record the build's identity while the tree is still in the state that produced it; see the header
+# of release-manifest.sh for why. Delegated to bash rather than reimplemented here, so the two build
+# scripts cannot drift on what a manifest contains. Non-fatal: a missing manifest does not make the
+# artifacts wrong.
+$manifest = Join-Path $PSScriptRoot 'release-manifest.sh'
+if ((Test-Path $manifest) -and (Get-Command bash -ErrorAction SilentlyContinue)) {
+    Write-Step 'Recording release manifest'
+    & bash $manifest $BuildType
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'Manifest generation failed (artifacts are unaffected).' -ForegroundColor Yellow
+    }
+}
+else {
+    Write-Host ''
+    Write-Host 'Skipping release manifest (needs bash; it ships with Git for Windows).' -ForegroundColor Yellow
 }

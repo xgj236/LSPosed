@@ -168,8 +168,17 @@ for f in riru zygisk; do
     # --collapse-resource-names rewrites res/ paths to short names AND replaces
     # every resource name with `0_resource_name_obfuscated`, so neither
     # "layout-watch" nor "activity_main" appears anywhere. The configuration
-    # qualifier is the only thing that survives, and it is what actually decides
-    # whether a watch selects this layout at runtime.
+    # qualifier is the only thing that survives.
+    #
+    # What this proves is "packaged", NOT "selected". The `watch` qualifier is
+    # matched against Configuration.uiMode == UI_MODE_TYPE_WATCH, which is not the
+    # same thing as the android.hardware.type.watch feature: the reference device
+    # declares the feature yet reports uiMode NORMAL, so it inflates the phone
+    # layout and every -watch resource is dead code there. The watch adaptation
+    # that actually runs is ThemeOverlay.Watch plus BaseActivity.isWatch()
+    # branches -- see docs/WATCH_ADAPTATION.md. Keep the assertion (a build that
+    # drops the qualified resources is still a build that drifted), but do not
+    # read a pass here as evidence that anything watch-specific reached a screen.
     n_watch="$("$AAPT2" dump resources "$WORK/$f/manager.apk" 2>/dev/null |
       grep -c "^ *(watch)" || true)"
   else
@@ -205,6 +214,98 @@ expect_token() { # <file> <riru-expected> <zygisk-expected>
 expect_token customize.sh "FLAVOR=riru" "FLAVOR=zygisk"
 expect_token daemon "flavor=riru" "flavor=zygisk"
 expect_token module.prop "id=riru_lsposed" "id=zygisk_lsposed"
+
+# --- Version identity ------------------------------------------------------
+#
+# One root build.gradle.kts feeds verName/verCode to the manager apk, the daemon apk, the zip
+# filename and module.prop, so the build has a single source of truth. Nothing proved it stayed
+# single in the *artifacts*, though: a zip assembled over a stale intermediate can carry an apk
+# from a different version, and this fork shipped six builds that all claimed 1.9.2 (7024) and
+# were therefore indistinguishable to Android and to package tooling alike.
+
+section "Version identity is consistent"
+
+# LSPosed-v<verName>-<verCode>-<flavor>-<buildType>.zip, parsed without regex escapes.
+zip_ver() {
+  local b="${1##*/}"
+  b="${b#LSPosed-v}"
+  b="${b%-*-*.zip}"
+  # Print nothing unless the -<code> tail actually survived, so callers can tell a failed parse
+  # from a version rather than comparing against a half-stripped filename.
+  case "$b" in
+  *-*) printf '%s' "$b" ;;
+  esac
+}
+RIRU_VER="$(zip_ver "$RIRU_ZIP")"
+ZYGISK_VER="$(zip_ver "$ZYGISK_ZIP")"
+
+if [ -z "$RIRU_VER" ] || [ -z "$ZYGISK_VER" ]; then
+  fail "cannot parse a version out of the zip filenames"
+elif [ "$RIRU_VER" = "$ZYGISK_VER" ]; then
+  pass "zip filenames agree: v${RIRU_VER%-*} (${RIRU_VER##*-})"
+else
+  fail "zip filenames disagree: '$RIRU_VER' vs '$ZYGISK_VER'"
+fi
+
+# module.prop is templated per flavor, so the byte-identity section above does not cover it. Each
+# flavor is checked against its *own* filename rather than against one shared expectation: a zip
+# whose name and payload disagree is the defect, and blaming the other flavor's filename for it
+# would point at the wrong artifact.
+prop_of() { # <riru|zygisk> <key>
+  local line
+  line="$(grep -m1 "^$2=" "$WORK/$1/module.prop" 2>/dev/null | tr -d "\r")"
+  printf '%s' "${line#*=}"
+}
+check_prop() { # <riru|zygisk> <verName-verCode>
+  local f="$1" want_name="${2%-*}" want_code="${2##*-}"
+  local got_code got_ver
+  got_code="$(prop_of "$f" versionCode)"
+  got_ver="$(prop_of "$f" version)"
+  if [ "$got_code" = "$want_code" ] && [ "$got_ver" = "v$want_name ($want_code)" ]; then
+    pass "$f module.prop matches its filename: $got_ver"
+  else
+    fail "$f module.prop reports '${got_ver:-none}' / '${got_code:-none}', filename says 'v$want_name ($want_code)'"
+  fi
+}
+if [ -n "$RIRU_VER" ]; then check_prop riru "$RIRU_VER"; fi
+if [ -n "$ZYGISK_VER" ]; then check_prop zygisk "$ZYGISK_VER"; fi
+
+# Pull a field out of an aapt2 badging line by word-splitting, so no regex escaping is needed.
+badging_field() { # <badging-line> <field-name>
+  local tok
+  for tok in $1; do
+    case "$tok" in
+    "$2="*)
+      printf '%s' "${tok#*=}" | tr -d "'"
+      return
+      ;;
+    esac
+  done
+}
+
+if [ -z "$RIRU_VER" ]; then
+  : # Nothing to compare the apks against.
+elif [ -n "$AAPT2" ]; then
+  # manager.apk and daemon.apk are byte-identical across flavors (asserted above), so one copy of
+  # each is enough. This is the check that catches a zip repacked around a stale apk: the filename
+  # and module.prop are both templated from the same Gradle run, so they cannot disagree on their
+  # own -- the apk inside is the part that can come from a different build.
+  want_name="${RIRU_VER%-*}"
+  want_code="${RIRU_VER##*-}"
+  for apk in manager.apk daemon.apk; do
+    line="$("$AAPT2" dump badging "$WORK/riru/$apk" 2>/dev/null | head -1)"
+    got_code="$(badging_field "$line" versionCode)"
+    got_name="$(badging_field "$line" versionName)"
+    if [ "$got_code" = "$want_code" ] && [ "$got_name" = "$want_name" ]; then
+      pass "$apk: $got_name ($got_code)"
+    else
+      fail "$apk reports '${got_name:-none}' (${got_code:-none}), expected '$want_name' ($want_code)"
+    fi
+  done
+else
+  # Not a failure, but not silence either: an unrun check must not read like a passed one.
+  printf '  note  aapt2 not found; apk version metadata not checked\n'
+fi
 
 # The native loader is built per-flavor against a different injection API, so it
 # must differ; identical loaders would mean a flavor was built with the wrong API.

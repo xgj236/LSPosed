@@ -55,21 +55,45 @@ cmaker {
     }
 }
 
-// Pinned to match upstream LSPosed 1.9.2 instead of being derived from the git
-// history. Upstream computes these from the commit count on origin/master
-// (2824 commits at tag v1.9.2, + the 4200 offset = 7024), which makes the
-// version depend on clone depth and on which branch happens to be fetched — a
-// shallow clone silently produces a wrong, much lower code. Hardcoding keeps
-// this fork's builds reporting the same version as the official 1.9.2 release.
-val verCodePinned = 7024
-val verNamePinned = "1.9.2"
+// The upstream release this fork is based on, pinned instead of being derived from the git
+// history. Upstream computes these from the commit count on origin/master (2824 commits at tag
+// v1.9.2, + the 4200 offset = 7024), which makes the version depend on clone depth and on which
+// branch happens to be fetched — a shallow clone silently produces a wrong, much lower code.
+// These two values name the base; forkPatch below is what distinguishes this fork's builds from
+// the official 1.9.2 release and from each other.
+val upstreamVerCode = 7024
+val upstreamVerName = "1.9.2"
+
+// Fork patch level. Every build that leaves this machine needs its own identity: Android
+// compares versionCode and package tooling compares versionName, so several builds all claiming
+// 1.9.2 (7024) are indistinguishable to both -- there is no way to tell which one is installed,
+// and reinstalling an older one looks like an upgrade. Patch levels 1..6 were built without
+// bumping anything, so they all shipped as 7024; 7 is the first that is actually distinct.
+// Bump this for every build that is handed to anyone or flashed anywhere.
+// 8 carries the CLI transport fixes that only surfaced once 7031 was tested on the watch: the
+// error reply a refused request used to lose to a connection reset, and a request byte limit
+// that no longer contradicts the target-count limit.
+// 9 carries the watch chrome compaction (BUG-007): on 7032 the app bar and bottom nav took 65%
+// of the screen height and the module-detail fab sat on top of the enable switch, eating its
+// taps. Bumped even though only the manager APK changed -- it gets copied over the module's
+// manager.apk, so a device running it would otherwise report a version whose archived artifact
+// has different bytes, which is exactly the ambiguity BUG-009 was about.
+// 10 fixes what testing 9 on the watch exposed: the collapsing toolbar cannot leave its expanded
+// state on a screen this short (its height equals the pinned toolbar's, so the scroll range is
+// zero), and Material's expanded geometry is computed for a 152dp box, so at 56dp the title was
+// drawn off the top edge. This is the second bump in one session for one bug, which is the point:
+// 9 was flashed, so 9's bytes are spoken for.
+val forkPatch = 10
 
 val injectedPackageName by extra("com.android.shell")
 val injectedPackageUid by extra(2000)
 
 val defaultManagerPackageName by extra("org.lsposed.manager")
-val verCode by extra(verCodePinned)
-val verName by extra(verNamePinned)
+// Derived, not two independent constants: bumping forkPatch alone can never leave the name and
+// the code disagreeing, and the arithmetic keeps the code monotonic and below upstream's next
+// release so an official 1.9.3 can still install over this fork.
+val verCode by extra(upstreamVerCode + forkPatch)
+val verName by extra(if (forkPatch == 0) upstreamVerName else "$upstreamVerName.$forkPatch")
 val androidTargetSdkVersion by extra(34)
 val androidMinSdkVersion by extra(27)
 val androidBuildToolsVersion by extra("34.0.0")

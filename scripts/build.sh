@@ -152,12 +152,40 @@ fi
 DEPS_MARKER="$DEPS_DIR/.published"
 DEPS_STAMP="api=$API_COMMIT service=$SERVICE_TAG+$SERVICE_AIDL_COMMIT"
 
+# The published artifacts live in the Maven local repository, which is outside the tree the
+# marker travels in. A .deps/ copied from another machine therefore arrives with a marker that
+# claims work that was never done here, and the build then fails deep inside dependency
+# resolution. Require the artifacts themselves, not just the marker.
+MAVEN_LOCAL="${MAVEN_REPO_LOCAL:-$HOME/.m2/repository}"
+DEPS_ARTIFACTS="
+$MAVEN_LOCAL/io/github/libxposed/api/100/api-100.aar
+$MAVEN_LOCAL/io/github/libxposed/api/100/api-100.pom
+$MAVEN_LOCAL/io/github/libxposed/interface/100/interface-100.aar
+$MAVEN_LOCAL/io/github/libxposed/interface/100/interface-100.pom
+"
+
+# Reads the marker as bytes the other build script might have written: build.ps1 runs on
+# Windows PowerShell 5.1, whose Set-Content -Encoding utf8 emits a UTF-8 BOM and CRLF. Without
+# stripping both, a marker written by build.ps1 never compares equal here and every bash build
+# re-published the dependencies from scratch.
+read_marker() {
+  sed -e '1s/^ï»¿//' -e 's/$//' "$1" | head -n 1
+}
+
+deps_artifacts_present() {
+  local f
+  for f in $DEPS_ARTIFACTS; do
+    [ -f "$f" ] || { log "missing published artifact: $f"; return 1; }
+  done
+  return 0
+}
+
 if [ "${FORCE_DEPS:-0}" = "1" ]; then
   log "FORCE_DEPS set, discarding cached dependencies"
   rm -rf "$DEPS_DIR"
 fi
 
-if [ -f "$DEPS_MARKER" ] && [ "$(cat "$DEPS_MARKER")" = "$DEPS_STAMP" ]; then
+if [ -f "$DEPS_MARKER" ] && [ "$(read_marker "$DEPS_MARKER")" = "$DEPS_STAMP" ]    && deps_artifacts_present; then
   log "libxposed dependencies already published ($DEPS_STAMP)"
 else
   mkdir -p "$DEPS_DIR"
@@ -202,7 +230,9 @@ else
   seed_sdk_location "$DEPS_DIR/service"
   gradle_in "$DEPS_DIR/service" :interface:publishToMavenLocal
 
-  echo "$DEPS_STAMP" > "$DEPS_MARKER"
+  # printf, not echo: no trailing newline keeps this byte-identical to what build.ps1 writes,
+  # so the two scripts can share a .deps/ directory.
+  printf '%s' "$DEPS_STAMP" > "$DEPS_MARKER"
 fi
 
 # --- LSPosed ---------------------------------------------------------------
@@ -232,4 +262,12 @@ ls -1sh "$ROOT/magisk-loader/release/"*.zip 2>/dev/null || true
 if [ "$FLAVOR" = "all" ] && [ -x "$ROOT/scripts/verify-parity.sh" ]; then
   log "Verifying Riru/Zygisk parity"
   "$ROOT/scripts/verify-parity.sh" "$BUILD_TYPE"
+fi
+
+# Record the build's identity while the tree is still in the state that produced it. Reconstructing
+# this afterwards is guesswork: the zips carry a version but not a commit, and the working tree moves
+# on. Non-fatal, because a missing manifest does not make the artifacts wrong.
+if [ -x "$ROOT/scripts/release-manifest.sh" ]; then
+  log "Recording release manifest"
+  "$ROOT/scripts/release-manifest.sh" "$BUILD_TYPE" || log "manifest generation failed (artifacts are unaffected)"
 fi
