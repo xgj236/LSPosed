@@ -1,0 +1,63 @@
+LSPosed fork release manifest
+=============================
+
+  version        v1.9.2 (7024)
+  build type     release
+  flavors        riru, zygisk
+  generated      2026-08-21T11:39:56Z
+
+Source
+------
+  commit         84aca150d684caa416a2f6d4d0c50ff3744c128c
+  committed      2026-08-20T19:06:31+08:00
+  branch         cli-and-watch
+  describe       v1.9.2.3-5-g84aca150-dirty
+  tree state     DIRTY -- 15 path(s) below are NOT in the commit above,
+                 so that commit alone does not reproduce these artifacts
+                  M app/src/main/java/org/lsposed/manager/ConfigManager.java
+                  M app/src/main/java/org/lsposed/manager/ui/fragment/ModulesFragment.java
+                  M app/src/main/java/org/lsposed/manager/ui/widget/EmptyStateRecyclerView.java
+                  M app/src/main/java/org/lsposed/manager/util/ModuleUtil.java
+                  M app/src/main/res/values/strings.xml
+                  M build.gradle.kts
+                  M daemon/src/main/java/org/lsposed/lspd/service/CommandListener.java
+                  M daemon/src/main/java/org/lsposed/lspd/service/ConfigManager.java
+                  M daemon/src/main/java/org/lsposed/lspd/service/LSPManagerService.java
+                  M scripts/build.ps1
+                  M scripts/build.sh
+                  M scripts/verify-parity.sh
+                  M services/manager-service/src/main/aidl/org/lsposed/lspd/ILSPManagerService.aidl
+                 ?? PROJECT_DEVELOPMENT.md
+                 ?? scripts/release-manifest.sh
+
+Toolchain
+---------
+  gradle         8.5
+  agp            8.2.1
+  compileSdk     34
+  targetSdk      34
+  minSdk         27
+  buildTools     34.0.0
+  ndk            26.1.10909125
+  java (on PATH) openjdk version "17.0.20" 2026-07-21
+
+Artifacts (sha256)
+------------------
+  b2e05e747200dcb9981176ade7bcd400451603a975fb06005c448c6893f460c4  LSPosed-v1.9.2-7024-riru-release.zip
+  268c9f8350af590b6b972afbaebadb918024c6b24bd0c5d8f70b7eba28d0be98  LSPosed-v1.9.2-7024-zygisk-release.zip
+
+Shared payload (sha256, read from LSPosed-v1.9.2-7024-riru-release.zip)
+-------------------------------------------------------------------
+  9d079e9ffcc59e2a45754cd1a34456f9c8db905877ebd70d00afc33854f98f11  manager.apk
+  e523f27077320e922878061865a509ad9bed0b0ece01cc19cbf65b1a55c464f6  daemon.apk
+  6260ac7391a09fb17e38cee8c71fee1367ff13b546175e0023d3365b58eec132  lspd-cli
+  f823656765f530619e7c360be8df9e6925c59872c04e244f2eda7ff647dfbd6d  framework/lspd.dex
+  (both flavors must carry identical copies of these; scripts/verify-parity.sh asserts it)
+
+Signing certificate of manager.apk (read from the apk, never from a keystore)
+----------------------------------------------------------------------------
+  Signer #1 certificate DN: CN=AllToolBox LSPosed, O=AllToolBox, L=Wuxi, ST=Jiangsu, C=CN
+  Signer #1 certificate SHA-256 digest: c479603e4e3074bd1c988ebbc936864625cb196f785e05c86f67f6782994fac5
+
+Verify the artifacts with:
+  sha256sum -c LSPosed-v1.9.2-7024-release.sha256

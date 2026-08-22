@@ -11,3 +11,14 @@
 
 # Local scratch space: logcat dumps, notes, throwaway test scripts
 /scratch
+
+# Flashed release artifacts, kept on this machine only. The zips are ~5 MB each and are
+# reproducible from the tagged source; what makes them *evidence* is the text beside them
+# (.manifest.txt, .sha256, NOTE.txt), and that is committed. See docs/BUILDING.md.
+magisk-loader/release-archive-*/*.zip
+
+# Lives at the archive root, one level above this repo, and its links are relative to there
+# (LSPosed/docs/, LSPOSED_BUG_REPORT_*.md) -- inside the repo they would all be dead, and the
+# files it points to are outside the repo entirely. The repo-relative, current version of the
+# same material is docs/.
+/PROJECT_DEVELOPMENT.md

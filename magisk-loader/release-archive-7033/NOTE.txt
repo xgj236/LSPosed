@@ -1,0 +1,25 @@
+7033 (v1.9.2.9) — why this directory has two riru zips
+======================================================
+
+*.as-flashed.zip
+    The bytes that were actually installed on Z11_SN and used for the on-device
+    BUG-007 measurements (app bar 166->97px, content 163->288px, nav 139->83px,
+    fab/switch overlap replaced by a 49px gap) and for screenshots 12-15.
+    Recovered from /data/local/tmp/lsposed-7033.zip on the device after the
+    release/ copy had already been overwritten. Its manager.apk hashes
+    92f803c936f891b25286e21ce74aace6bc9c021e05a0bab1c39cca52c3d7d6f3, identical
+    to /data/adb/modules/riru_lsposed/manager.apk, so this is provably the build
+    those results came from.
+
+*.rebuilt-never-flashed.zip  (and the matching manifest / sha256)
+    A later build of the same version constants carrying the collapsing-toolbar
+    title fix. It overwrote the original 7033 zips in magisk-loader/release/
+    before they were archived — the mistake BUG-009 is about, made in the small:
+    two different artifacts claiming one identity. It was never flashed and never
+    handed to anyone. Its content is superseded by 7034, which carries the same
+    resource change under an identity of its own; it is kept only so the byte
+    history is complete.
+
+    The zygisk counterpart of the as-flashed 7033 is NOT recoverable — only the
+    riru zip was ever pushed to the device. Nothing was verified on zygisk 7033,
+    so no result depends on those bytes.

@@ -1,0 +1,26 @@
+7031 (v1.9.2.7) -- no build manifest for this round
+==================================================
+
+These two zips are the build that the first on-device round was run against: the
+ten findings walked through one by one, and screenshots 01-07. What they do not
+have is a *.manifest.txt, because release-manifest.sh was not run for this round
+-- so the commit and toolchain that produced them are not recorded anywhere, and
+cannot be reconstructed after the fact. That gap is the reason the script exists;
+every round from 7032 on has one.
+
+What can still be stated is what these files are, measured from the files
+themselves rather than remembered:
+
+  LSPosed-v1.9.2.7-7031-riru-release.zip
+    2458066 bytes, mtime 2026-08-22T16:17:13
+    sha256 7637aea95d99bc77be92a6f88ecd6dc43190a9b6c3d85fa8f774805fb6afb065
+
+  LSPosed-v1.9.2.7-7031-zygisk-release.zip
+    2456880 bytes, mtime 2026-08-22T16:17:14
+    sha256 deae3cb98cc3717754cb5d50cce7db97eff035f614f0d7b99482359ddf604346
+
+Both zips carry versionCode=7031 / version=v1.9.2.7 (7031), read out of module.prop
+inside the zips rather than off their filenames; the results attributed to
+this round in docs/TESTING.md were taken on the riru one, flashed on Z11_SN. The
+zips themselves are not in git (see .gitignore) -- this file and the sha256 above
+are what makes them identifiable.

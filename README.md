@@ -12,8 +12,10 @@ upstream.
   abstract socket using the same `ConfigManager` calls the manager UI uses.
 - **Settings crash fix** — `ShortcutManager` is absent on some custom ROMs, where
   the unguarded `getSystemService` call made the settings page crash on open.
-- **Watch support** — compact layout selected via `android.hardware.type.watch`,
-  with the same view hierarchy as the phone layout so no Java changes are needed.
+- **Watch support** — a compact theme overlay applied before inflation, plus code paths
+  that branch on `PackageManager.FEATURE_WATCH`. The `-watch` resource qualifier keys off
+  `uiMode`, not that feature, so it is never selected on the reference device; see
+  [docs/WATCH_ADAPTATION.md](docs/WATCH_ADAPTATION.md).
 
 Both the Riru and Zygisk flavors carry all three. See [docs/](docs/) for details.
 

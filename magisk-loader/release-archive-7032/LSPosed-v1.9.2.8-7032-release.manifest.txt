@@ -1,0 +1,76 @@
+LSPosed fork release manifest
+=============================
+
+  version        v1.9.2.8 (7032)
+  build type     release
+  flavors        riru, zygisk
+  generated      2026-08-22T09:30:33Z
+
+Source
+------
+  commit         84aca150d684caa416a2f6d4d0c50ff3744c128c
+  committed      2026-08-20T19:06:31+08:00
+  branch         cli-and-watch
+  describe       v1.9.2.3-5-g84aca150-dirty
+  tree state     DIRTY -- 28 path(s) below are NOT in the commit above,
+                 so that commit alone does not reproduce these artifacts
+                  M app/build.gradle.kts
+                  M app/src/main/java/org/lsposed/manager/ConfigManager.java
+                  M app/src/main/java/org/lsposed/manager/ui/fragment/ModulesFragment.java
+                  M app/src/main/java/org/lsposed/manager/ui/widget/EmptyStateRecyclerView.java
+                  M app/src/main/java/org/lsposed/manager/util/ModuleUtil.java
+                  M app/src/main/res/values/strings.xml
+                  M build.gradle.kts
+                  M daemon/build.gradle.kts
+                  M daemon/src/main/java/org/lsposed/lspd/cli/CliMain.java
+                  M daemon/src/main/java/org/lsposed/lspd/service/CommandListener.java
+                  M daemon/src/main/java/org/lsposed/lspd/service/ConfigManager.java
+                  M daemon/src/main/java/org/lsposed/lspd/service/LSPManagerService.java
+                  M docs/BUILDING.md
+                  M docs/README.md
+                  M docs/TESTING.md
+                  M docs/WATCH_ADAPTATION.md
+                  M gradle/libs.versions.toml
+                  M scripts/build.ps1
+                  M scripts/build.sh
+                  M scripts/verify-parity.sh
+                  M services/manager-service/src/main/aidl/org/lsposed/lspd/ILSPManagerService.aidl
+                 ?? PROJECT_DEVELOPMENT.md
+                 ?? app/src/test/
+                 ?? daemon/src/test/
+                 ?? docs/screenshots/
+                 ?? magisk-loader/release-archive-7024/
+                 ?? scripts/capture-screen.ps1
+                 ?? scripts/release-manifest.sh
+
+Toolchain
+---------
+  gradle         8.5
+  agp            8.2.1
+  compileSdk     34
+  targetSdk      34
+  minSdk         27
+  buildTools     34.0.0
+  ndk            26.1.10909125
+  java (on PATH) openjdk version "17.0.20" 2026-07-21
+
+Artifacts (sha256)
+------------------
+  c353dc78c0477f51b9b4909e3fee87fa0526ec23bfd6eb3c2053cd1c41a4b3dc  LSPosed-v1.9.2.8-7032-riru-release.zip
+  f74f861a9e95444d740ca2a7434fc12c069c5a2eb5128544193cce9fd677f69d  LSPosed-v1.9.2.8-7032-zygisk-release.zip
+
+Shared payload (sha256, read from LSPosed-v1.9.2.8-7032-riru-release.zip)
+-------------------------------------------------------------------
+  b7035eb9024c33cc3946189cf4c19dfa31ec92796cdedab70c23e955ff793aa3  manager.apk
+  cb511e1fb3c4a59cfb5dbe5b5ccd2a6a93cf0d10fa71e5afe41b7c82a956c5d9  daemon.apk
+  6260ac7391a09fb17e38cee8c71fee1367ff13b546175e0023d3365b58eec132  lspd-cli
+  3ccfcbbcf371b1ffdda591eab14bfb560fe2b3b67624d9706b00334573a67726  framework/lspd.dex
+  (both flavors must carry identical copies of these; scripts/verify-parity.sh asserts it)
+
+Signing certificate of manager.apk (read from the apk, never from a keystore)
+----------------------------------------------------------------------------
+  Signer #1 certificate DN: CN=AllToolBox LSPosed, O=AllToolBox, L=Wuxi, ST=Jiangsu, C=CN
+  Signer #1 certificate SHA-256 digest: c479603e4e3074bd1c988ebbc936864625cb196f785e05c86f67f6782994fac5
+
+Verify the artifacts with:
+  sha256sum -c LSPosed-v1.9.2.8-7032-release.sha256
