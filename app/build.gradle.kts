@@ -155,6 +155,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(projects.services.managerService)
 
+    testImplementation(libs.junit)
+
     debugImplementation(libs.appcenter.analytics)
     debugImplementation(libs.appcenter.crashes)
 }

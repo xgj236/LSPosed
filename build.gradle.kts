@@ -109,6 +109,15 @@ subprojects {
                 checkReleaseBuilds = false
             }
 
+            // JVM unit tests run against a stubbed android.jar whose methods throw by default.
+            // Returning defaults instead lets a test construct a plain ApplicationInfo and set its
+            // fields, which is all the module-recognition code actually reads. Configured here
+            // rather than per-module so a new module's tests do not fail for a reason that has
+            // nothing to do with the code under test.
+            testOptions {
+                unitTests.isReturnDefaultValues = true
+            }
+
             compileOptions {
                 sourceCompatibility = androidSourceCompatibility
                 targetCompatibility = androidTargetCompatibility

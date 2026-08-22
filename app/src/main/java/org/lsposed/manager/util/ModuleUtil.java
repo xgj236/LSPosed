@@ -36,7 +36,6 @@ import androidx.core.util.Pair;
 import org.lsposed.lspd.models.UserInfo;
 import org.lsposed.manager.App;
 import org.lsposed.manager.ConfigManager;
-import org.lsposed.manager.adapters.ScopeAdapter;
 import org.lsposed.manager.repo.RepoLoader;
 import org.lsposed.manager.repo.model.OnlineModule;
 
@@ -112,25 +111,87 @@ public final class ModuleUtil {
         return result;
     }
 
-    public static ZipFile getModernModuleApk(ApplicationInfo info) {
-        String[] apks;
-        if (info.splitSourceDirs != null) {
-            apks = Arrays.copyOf(info.splitSourceDirs, info.splitSourceDirs.length + 1);
-            apks[info.splitSourceDirs.length] = info.sourceDir;
-        } else apks = new String[]{info.sourceDir};
-        ZipFile zip = null;
-        for (var apk : apks) {
+    /** Where a modern module lists its entry classes. This is the only modern marker. */
+    private static final String MODERN_ENTRY = "META-INF/xposed/java_init.list";
+    /** Where a traditional module lists its entry class. Recognises a module, but not a modern one. */
+    private static final String LEGACY_ENTRY = "assets/xposed_init";
+
+    /**
+     * What a package's APKs say about it, which is two independent questions: whether it is a
+     * module at all, and which metadata layout to read it with.
+     * <p>
+     * Conflating the two is what hid module descriptions and recommended apps: nearly every
+     * traditional module ships {@link #LEGACY_ENTRY}, so treating that as a modern marker made
+     * the manager look for its description and scope under META-INF/xposed, find nothing, and
+     * cache the nothing.
+     */
+    public static final class ModuleApk {
+        /**
+         * Open handle to the APK carrying {@link #MODERN_ENTRY}, or null when this is not a
+         * modern module. Ownership passes to the receiver, which must close it.
+         */
+        @Nullable
+        public final ZipFile modernApk;
+        /** Whether any APK carries {@link #LEGACY_ENTRY}. */
+        public final boolean legacyEntry;
+
+        private ModuleApk(@Nullable ZipFile modernApk, boolean legacyEntry) {
+            this.modernApk = modernApk;
+            this.legacyEntry = legacyEntry;
+        }
+
+        /** Whether the packaging alone identifies this package as a module. */
+        public boolean isModule() {
+            return modernApk != null || legacyEntry;
+        }
+
+        /** Releases {@link #modernApk} when no {@link InstalledModule} took it over. */
+        public void close() {
+            if (modernApk == null) return;
             try {
-                zip = new ZipFile(apk);
-                if (zip.getEntry("META-INF/xposed/java_init.list") != null || zip.getEntry("assets/xposed_init") != null) {
-                    return zip;
-                }
-                zip.close();
-                zip = null;
+                modernApk.close();
             } catch (IOException ignored) {
             }
         }
-        return zip;
+    }
+
+    private static String[] collectApks(ApplicationInfo info) {
+        if (info.splitSourceDirs == null) return new String[]{info.sourceDir};
+        var apks = Arrays.copyOf(info.splitSourceDirs, info.splitSourceDirs.length + 1);
+        apks[info.splitSourceDirs.length] = info.sourceDir;
+        return apks;
+    }
+
+    /**
+     * Scans a package's APKs -- base plus splits -- for packaging markers. Closes every archive
+     * it opens except the one it hands back, so scanning a split package no longer leaks one
+     * ZipFile per APK it had to look inside.
+     */
+    public static ModuleApk scanModuleApk(ApplicationInfo info) {
+        boolean legacyEntry = false;
+        for (var apk : collectApks(info)) {
+            if (apk == null) continue;
+            ZipFile zip = null;
+            try {
+                zip = new ZipFile(apk);
+                if (zip.getEntry(MODERN_ENTRY) != null) {
+                    var modern = zip;
+                    zip = null; // ownership passes to the returned ModuleApk
+                    return new ModuleApk(modern, legacyEntry);
+                }
+                if (zip.getEntry(LEGACY_ENTRY) != null) legacyEntry = true;
+            } catch (IOException | SecurityException | IllegalStateException ignored) {
+                // Unreadable or corrupt APK: it contributes no markers.
+            } finally {
+                if (zip != null) {
+                    try {
+                        zip.close();
+                    } catch (IOException ignored) {
+                    }
+                }
+            }
+        }
+        return new ModuleApk(null, legacyEntry);
     }
 
     public static boolean isLegacyModule(ApplicationInfo info) {
@@ -173,9 +234,14 @@ public final class ModuleUtil {
         for (PackageInfo pkg : state.packages) {
             ApplicationInfo app = pkg.applicationInfo;
 
-            var modernApk = getModernModuleApk(app);
-            if (modernApk != null || isLegacyModule(app)) {
-                modules.computeIfAbsent(Pair.create(pkg.packageName, app.uid / App.PER_USER_RANGE), k -> new InstalledModule(pkg, modernApk));
+            var apkInfo = scanModuleApk(app);
+            var key = Pair.create(pkg.packageName, app.uid / App.PER_USER_RANGE);
+            // Only InstalledModule closes the handle, so anything that does not reach the
+            // constructor -- a non-module, or a duplicate key -- has to close it here.
+            if ((apkInfo.isModule() || isLegacyModule(app)) && !modules.containsKey(key)) {
+                modules.put(key, new InstalledModule(pkg, apkInfo));
+            } else {
+                apkInfo.close();
             }
         }
 
@@ -261,8 +327,14 @@ public final class ModuleUtil {
         }
 
         ApplicationInfo app = pkg.applicationInfo;
-        var modernApk = getModernModuleApk(app);
-        InstalledModule module = modernApk != null || isLegacyModule(app) ? new InstalledModule(pkg, modernApk) : null;
+        var apkInfo = scanModuleApk(app);
+        InstalledModule module;
+        if (apkInfo.isModule() || isLegacyModule(app)) {
+            module = new InstalledModule(pkg, apkInfo);
+        } else {
+            apkInfo.close();
+            module = null;
+        }
         InstalledModule old;
         boolean enabledChanged;
         synchronized (moduleLock) {
@@ -313,40 +385,18 @@ public final class ModuleUtil {
         if (!ConfigManager.setModuleEnabled(packageName, enabled)) {
             return false;
         }
+        // ConfigManager.setModuleEnabled() returned true, so the daemon has committed both the
+        // enabled flag and -- when enabling -- the module's own scope row. Nothing to add here.
         synchronized (moduleLock) {
             var updatedEnabledModules = new HashSet<>(enabledModules);
             if (enabled) {
                 updatedEnabledModules.add(packageName);
-                // Auto-add the module itself to its scope so its UI can detect Xposed.
-                // Without this, a freshly-enabled module shows "not activated" in its
-                // own settings because XposedBridge APIs are unavailable in processes
-                // outside the scope.
-                autoAddModuleToOwnScope(packageName);
             } else {
                 updatedEnabledModules.remove(packageName);
             }
             enabledModules = Collections.unmodifiableSet(updatedEnabledModules);
         }
         return true;
-    }
-
-    private void autoAddModuleToOwnScope(String packageName) {
-        try {
-            var currentScope = ConfigManager.getModuleScope(packageName);
-            if (currentScope == null) currentScope = new ArrayList<>();
-
-            var scopeSet = new HashSet<>(currentScope);
-            var selfApp = new ScopeAdapter.ApplicationWithEquals(packageName, 0);
-
-            // Only add if not already present
-            if (!scopeSet.contains(selfApp)) {
-                scopeSet.add(selfApp);
-                ConfigManager.setModuleScope(packageName, false, scopeSet);
-                Log.i(App.TAG, "Auto-added " + packageName + " to its own scope");
-            }
-        } catch (Throwable t) {
-            Log.w(App.TAG, "Failed to auto-add module to own scope: " + packageName, t);
-        }
     }
 
     public boolean isModuleEnabled(String packageName) {
@@ -400,8 +450,10 @@ public final class ModuleUtil {
         private String appName; // loaded lazily
         private String description; // loaded lazily
         private List<String> scopeList; // loaded lazily
+        /** Scope shipped inside the APK, or null when the APK ships none. */
+        private final List<String> packagedScopeList;
 
-        private InstalledModule(PackageInfo pkg, ZipFile modernModuleApk) {
+        private InstalledModule(PackageInfo pkg, ModuleApk apkInfo) {
             app = pkg.applicationInfo;
             this.pkg = pkg;
             userId = pkg.applicationInfo.uid / App.PER_USER_RANGE;
@@ -414,10 +466,12 @@ public final class ModuleUtil {
             }
             installTime = pkg.firstInstallTime;
             updateTime = pkg.lastUpdateTime;
-            legacy = modernModuleApk == null;
+            legacy = apkInfo.modernApk == null;
 
             if (legacy) {
-                Object minVersionRaw = app.metaData.get("xposedminversion");
+                // A module recognised only by assets/xposed_init has no Manifest metadata at
+                // all, so this cannot assume app.metaData is present.
+                Object minVersionRaw = app.metaData == null ? null : app.metaData.get("xposedminversion");
                 if (minVersionRaw instanceof Integer) {
                     minVersion = (Integer) minVersionRaw;
                 } else if (minVersionRaw instanceof String) {
@@ -427,11 +481,13 @@ public final class ModuleUtil {
                 }
                 targetVersion = minVersion; // legacy modules don't have a target version
                 staticScope = false;
+                packagedScopeList = null;
             } else {
                 int minVersion = 100;
                 int targetVersion = 100;
                 boolean staticScope = false;
-                try (modernModuleApk) {
+                List<String> packagedScope = null;
+                try (var modernModuleApk = apkInfo.modernApk) {
                     var propEntry = modernModuleApk.getEntry("META-INF/xposed/module.prop");
                     if (propEntry != null) {
                         var prop = new Properties();
@@ -443,17 +499,18 @@ public final class ModuleUtil {
                     var scopeEntry = modernModuleApk.getEntry("META-INF/xposed/scope.list");
                     if (scopeEntry != null) {
                         try (var reader = new BufferedReader(new InputStreamReader(modernModuleApk.getInputStream(scopeEntry)))) {
-                            scopeList = reader.lines().collect(Collectors.toList());
+                            packagedScope = reader.lines().collect(Collectors.toList());
                         }
-                    } else {
-                        scopeList = Collections.emptyList();
                     }
+                    // No scope.list stays null rather than an empty list: an empty list would
+                    // be cached as the final answer and shadow the repository fallback.
                 } catch (IOException | OutOfMemoryError e) {
-                    Log.e(App.TAG, "Error while closing modern module APK", e);
+                    Log.e(App.TAG, "Error while reading modern module APK", e);
                 }
                 this.minVersion = minVersion;
                 this.targetVersion = targetVersion;
                 this.staticScope = staticScope;
+                packagedScopeList = packagedScope;
             }
         }
 
@@ -467,11 +524,16 @@ public final class ModuleUtil {
             return appName;
         }
 
+        /**
+         * Description fallback chain: packaged metadata first, then the online repository.
+         * An empty result is never cached, so a description that only the repository knows
+         * still shows up once the repository has loaded.
+         */
         public String getDescription() {
             if (this.description != null) return this.description;
             String descriptionTmp = "";
             if (legacy) {
-                Object descriptionRaw = app.metaData.get("xposeddescription");
+                Object descriptionRaw = app.metaData == null ? null : app.metaData.get("xposeddescription");
                 if (descriptionRaw instanceof String) {
                     descriptionTmp = ((String) descriptionRaw).trim();
                 } else if (descriptionRaw instanceof Integer) {
@@ -484,23 +546,51 @@ public final class ModuleUtil {
                 }
             } else {
                 var des = app.loadDescription(pm);
-                if (des != null) descriptionTmp = des.toString();
+                if (des != null) descriptionTmp = des.toString().trim();
+            }
+            if (descriptionTmp.isEmpty()) {
+                // loadDescription() is empty for most modules, and an asset-only legacy module
+                // has no Manifest metadata at all; the repository is the last source.
+                OnlineModule online = RepoLoader.getInstance().getOnlineModule(packageName);
+                // getSummary() is the description text -- getDescription() is the display title.
+                if (online != null && online.getSummary() != null) {
+                    descriptionTmp = online.getSummary().trim();
+                }
+            }
+            if (descriptionTmp.isEmpty()) {
+                // Don't cache: the repository may not have loaded yet.
+                return "";
             }
             this.description = descriptionTmp;
             return this.description;
         }
 
+        /**
+         * Recommended-scope fallback chain: packaged {@code META-INF/xposed/scope.list},
+         * then legacy {@code xposedscope} Manifest metadata, then the online repository.
+         * An empty result is never cached, for the same reason as {@link #getDescription()}.
+         */
         public List<String> getScopeList() {
             if (scopeList != null) return scopeList;
+
+            if (packagedScopeList != null) {
+                // A modern module ships its scope verbatim; the historical name swap below
+                // applies to legacy conventions only.
+                scopeList = packagedScopeList;
+                return scopeList;
+            }
+
             List<String> list = null;
             try {
-                int scopeListResourceId = app.metaData.getInt("xposedscope");
-                if (scopeListResourceId != 0) {
-                    list = Arrays.asList(pm.getResourcesForApplication(app).getStringArray(scopeListResourceId));
-                } else {
-                    String scopeListString = app.metaData.getString("xposedscope");
-                    if (scopeListString != null)
-                        list = Arrays.asList(scopeListString.split(";"));
+                if (app.metaData != null) {
+                    int scopeListResourceId = app.metaData.getInt("xposedscope");
+                    if (scopeListResourceId != 0) {
+                        list = Arrays.asList(pm.getResourcesForApplication(app).getStringArray(scopeListResourceId));
+                    } else {
+                        String scopeListString = app.metaData.getString("xposedscope");
+                        if (scopeListString != null)
+                            list = Arrays.asList(scopeListString.split(";"));
+                    }
                 }
             } catch (Exception ignored) {
             }
@@ -510,18 +600,24 @@ public final class ModuleUtil {
                     list = module.getScope();
                 }
             }
-            if (list != null) {
-                //For historical reasons, legacy modules use the opposite name.
-                //https://github.com/rovo89/XposedBridge/commit/6b49688c929a7768f3113b4c65b429c7a7032afa
-                list.replaceAll(s ->
-                    switch (s) {
-                        case "android" -> "system";
-                        case "system" -> "android";
-                        default -> s;
-                    }
-                );
-                scopeList = list;
+            if (list == null || list.isEmpty()) {
+                // Don't cache: packaged metadata is absent, so the repository is the only
+                // remaining source and it may not have loaded yet.
+                return null;
             }
+            // Copy before rewriting: Arrays.asList() writes through to the resource array and
+            // the repository list is shared with RepoLoader's cached model.
+            var normalized = new ArrayList<>(list);
+            //For historical reasons, legacy modules use the opposite name.
+            //https://github.com/rovo89/XposedBridge/commit/6b49688c929a7768f3113b4c65b429c7a7032afa
+            normalized.replaceAll(s ->
+                switch (s) {
+                    case "android" -> "system";
+                    case "system" -> "android";
+                    default -> s;
+                }
+            );
+            scopeList = normalized;
             return scopeList;
         }
 
