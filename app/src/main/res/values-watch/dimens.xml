@@ -1,9 +1,18 @@
 <!--
   ~ LSPosed watch adaptation.
   ~
-  ~ Selected on devices declaring android.hardware.type.watch. The reference
-  ~ device (Z11_SN) reports sw159dp-w159dp-h179dp at 416dpi, so there is far
-  ~ less room than on a phone and every fixed dimension has to shrink.
+  ~ Selected on uiMode=UI_MODE_TYPE_WATCH — NOT on android.hardware.type.watch.
+  ~ The distinction is the whole reason this file used to have no effect: the
+  ~ reference device (Z11_SN, 416x468px @416dpi) declares the feature but reports
+  ~ uiMode=normal, so nothing qualified -watch is ever selected on it. Anything
+  ~ that must shrink on that device belongs in values/dimens.xml + ThemeOverlay.Watch
+  ~ or in code keyed off BaseActivity.isWatch().
+  ~
+  ~ What is left here therefore only reaches real Wear OS devices, and is unverified:
+  ~ there is no such device on hand, and these values were authored against the raw
+  ~ 159dp viewport rather than the ~240dp one BaseActivity's density scaling produces,
+  ~ so they are probably too small. Left as-is rather than guessed at — see
+  ~ docs/TESTING.md#未覆蓋.
   -->
 
 <resources>
@@ -11,8 +20,12 @@
     <dimen name="tab_layout_height">32dp</dimen>
     <dimen name="home_primary_elevation">1dp</dimen>
 
-    <!-- Compact bottom nav: 5 unlabelled icons have to fit in ~159dp. -->
-    <dimen name="watch_nav_height">36dp</dimen>
-    <dimen name="watch_nav_icon_size">20dp</dimen>
-    <dimen name="watch_nav_item_padding">4dp</dimen>
+    <!--
+      ~ The bottom nav dimens deliberately are NOT overridden here. They used to be
+      ~ (36dp tall, authored against the raw 159dp viewport), but BaseActivity scales
+      ~ the density so every watch lays out against ~240dp, and at that width 36dp is
+      ~ below Material's 48x48dp minimum touch target. They now live unqualified in
+      ~ values/dimens.xml, which is also the only copy that takes effect on ROMs that
+      ~ report uiMode=normal — one set of numbers for both selection paths.
+      -->
 </resources>

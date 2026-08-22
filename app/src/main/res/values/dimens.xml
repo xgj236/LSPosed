@@ -24,17 +24,58 @@
 
     <dimen name="home_primary_elevation">6dp</dimen>
 
-    <!-- Only consumed by layout-watch; defined here so every configuration resolves. -->
-    <dimen name="watch_nav_height">56dp</dimen>
-    <dimen name="watch_nav_icon_size">24dp</dimen>
-    <dimen name="watch_nav_item_padding">8dp</dimen>
+    <!--
+      ~ Bottom nav geometry for watch-class screens. Defined without a qualifier
+      ~ because these are the values that actually take effect: MainActivity applies
+      ~ them in code, keyed off FEATURE_WATCH, since the -watch qualifier does not
+      ~ match on the reference device (see below). layout-watch/activity_main.xml
+      ~ reads the same names, so a real Wear OS device — where the qualifier does
+      ~ match — gets identical geometry rather than a second set of numbers that can
+      ~ drift.
+      ~
+      ~ 48dp is the floor, not a preference: after the density scaling in
+      ~ BaseActivity the viewport is 240dp wide, so five nav items are 48dp each and
+      ~ a shorter bar would put the touch target below Material's 48x48dp minimum.
+      ~ The measured cost of the previous 80dp default was concrete — app bar 96dp +
+      ~ nav 80dp left 94dp of a 270dp viewport for content, about one list row.
+      -->
+    <dimen name="watch_nav_height">48dp</dimen>
+    <dimen name="watch_nav_icon_size">20dp</dimen>
+    <dimen name="watch_nav_item_padding">6dp</dimen>
 
     <!--
-      ~ Applied via ThemeOverlay.Watch instead of a -watch qualifier. Watch displays
-      ~ fall below Android's smallest size bucket (small = 320 x 426dp), so the
-      ~ platform runs the app in screen compatibility mode and synthesises a
-      ~ `normal` configuration, leaving the -watch resources unreachable on them.
+      ~ Applied via ThemeOverlay.Watch instead of a -watch qualifier. The qualifier
+      ~ keys off uiMode, and watch-class ROMs of this kind report uiMode=normal
+      ~ (confirmed with `am get-config` on the reference device: the config string
+      ~ carries `small` but no `watch` token), so -watch resources are unreachable
+      ~ there. Size qualifiers are no substitute: `small` and `sw159dp` also match
+      ~ phones, so using them would shrink the phone UI too.
+      ~
+      ~ 56dp = actionBarSize, i.e. the large collapsing toolbar collapses to a plain
+      ~ toolbar. At the previous 96dp the title also collided with the back chevron
+      ~ on the module detail page, because a 240dp-wide expanded title has nowhere to
+      ~ go.
       -->
-    <dimen name="watch_collapsing_toolbar_size">96dp</dimen>
+    <dimen name="watch_collapsing_toolbar_size">56dp</dimen>
     <dimen name="watch_dialog_padding">12dp</dimen>
+
+    <!--
+      ~ Expanded-title geometry for the watch app bar. The collapsing toolbar is stuck in its
+      ~ EXPANDED state on this device and cannot leave it: its total height is
+      ~ watch_collapsing_toolbar_size (56dp) and the toolbar inside it is pinned at
+      ~ actionBarSize (also 56dp), so the scroll range is zero and expandedFraction never moves
+      ~ off 1. Only the expanded values are ever used, and Material's Large style computes them
+      ~ for a 152dp box: measured on 7032 (96dp bar) the title landed on top of the back
+      ~ chevron, and on 7033 (56dp bar) it was drawn above the top edge and clipped. Neither is
+      ~ a height problem, so neither is fixed by changing the height.
+      ~
+      ~ These reproduce the COLLAPSED geometry by hand, since that is the layout the widget
+      ~ would otherwise only reach by scrolling. The two horizontal values are the measured
+      ~ widths of what shares that row: the chevron is [0,0][97,90] = 56dp, and search plus
+      ~ overflow span x 264..416 = 88dp. The title therefore gets the 96dp between them, which
+      ~ is what the collapsed bounds (taken from the dummy view inside the toolbar) would give.
+      -->
+    <dimen name="watch_appbar_title_margin_start">56dp</dimen>
+    <dimen name="watch_appbar_title_margin_end">88dp</dimen>
+    <dimen name="watch_appbar_title_margin_bottom">4dp</dimen>
 </resources>

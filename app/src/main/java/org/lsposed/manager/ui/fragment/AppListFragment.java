@@ -39,12 +39,15 @@ import androidx.recyclerview.widget.ConcatAdapter;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
+
 import org.lsposed.manager.App;
 import org.lsposed.manager.ConfigManager;
 import org.lsposed.manager.R;
 import org.lsposed.manager.adapters.AppHelper;
 import org.lsposed.manager.adapters.ScopeAdapter;
 import org.lsposed.manager.databinding.FragmentAppListBinding;
+import org.lsposed.manager.ui.activity.base.BaseActivity;
 import org.lsposed.manager.util.BackupUtils;
 import org.lsposed.manager.util.ModuleUtil;
 
@@ -106,6 +109,15 @@ public class AppListFragment extends BaseFragment implements MenuProvider {
         } else {
             binding.fab.setVisibility(View.VISIBLE);
             binding.fab.setOnClickListener(v -> ConfigManager.startActivityAsUserWithFeature(intent, module.userId));
+            if (BaseActivity.isWatch(requireContext())) {
+                // A full-size fab is 56 of the ~240dp this screen is wide once the density
+                // scaling has run, and it is anchored over the bottom of the list. Before the
+                // app bar was compacted the list was one row tall, so the fab landed on the
+                // enable switch and swallowed its taps -- tapping the switch opened the
+                // module's own settings instead and left the module state unchanged. Mini
+                // keeps that from recurring the moment anything else costs a few dp.
+                binding.fab.setSize(FloatingActionButton.SIZE_MINI);
+            }
         }
         searchListener = scopeAdapter.getSearchListener();
 

@@ -98,8 +98,36 @@ public class MainActivity extends BaseActivity implements RepoLoader.RepoListene
         NavController navController = navHostFragment.getNavController();
         var nav = (NavigationBarView) binding.nav;
         NavigationUI.setupWithNavController(nav, navController);
+        compactNavForWatch(nav);
 
         handleIntent(getIntent());
+    }
+
+    /**
+     * Shrink the bottom nav on watch-class screens.
+     *
+     * <p>This duplicates what layout-watch/activity_main.xml already declares, and has to:
+     * that layout is selected on uiMode=watch, which the reference device does not report
+     * (see {@link BaseActivity#isWatch}), so on the device this fork targets the phone
+     * layout is what gets inflated -- 80dp of nav, with the selected item's label drawn
+     * past the bottom edge of a 468px screen. Reading the same dimens the watch layout
+     * reads keeps the two paths from drifting.
+     *
+     * <p>Label visibility is forced rather than left to LABEL_VISIBILITY_AUTO: with five
+     * items auto labels the selected one only, which is what pushed the labels off-screen.
+     */
+    private void compactNavForWatch(NavigationBarView nav) {
+        if (!BaseActivity.isWatch(this)) return;
+        var res = getResources();
+        nav.setLabelVisibilityMode(NavigationBarView.LABEL_VISIBILITY_UNLABELED);
+        nav.setItemIconSize(res.getDimensionPixelSize(R.dimen.watch_nav_icon_size));
+        int height = res.getDimensionPixelSize(R.dimen.watch_nav_height);
+        nav.setMinimumHeight(height);
+        var lp = nav.getLayoutParams();
+        if (lp != null && lp.height != height) {
+            lp.height = height;
+            nav.setLayoutParams(lp);
+        }
     }
 
     @Override

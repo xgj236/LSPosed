@@ -32,7 +32,29 @@
       -->
     <style name="ThemeOverlay.Watch">
         <item name="collapsingToolbarLayoutLargeSize">@dimen/watch_collapsing_toolbar_size</item>
+        <item name="collapsingToolbarLayoutLargeStyle">@style/Widget.Watch.CollapsingToolbar</item>
         <item name="dialogPreferredPadding">@dimen/watch_dialog_padding</item>
         <item name="android:dialogPreferredPadding">@dimen/watch_dialog_padding</item>
+    </style>
+
+    <!--
+      ~ Every fragment's app bar takes its style from ?attr/collapsingToolbarLayoutLargeStyle,
+      ~ so overriding that one attribute in the overlay reaches all of them at once; there is no
+      ~ per-fragment layout to keep in sync.
+      ~
+      ~ Only the expanded values are overridden, because on a watch they are the only ones that
+      ~ are ever used — see watch_appbar_title_margin_start in dimens.xml for why the widget can
+      ~ never collapse here. Material's Large style puts a 28sp two-line headline in a 152dp box;
+      ~ at 56dp that draws off the top of the screen. Dropping to the toolbar's own text sizes
+      ~ and to the collapsed margins makes the expanded state look like the ordinary single-row
+      ~ toolbar the widget would show if it could collapse.
+      -->
+    <style name="Widget.Watch.CollapsingToolbar" parent="Widget.Material3.CollapsingToolbar.Large">
+        <item name="expandedTitleTextAppearance">?attr/textAppearanceTitleMedium</item>
+        <item name="expandedSubtitleTextAppearance">?attr/textAppearanceBodySmall</item>
+        <item name="expandedTitleMarginStart">@dimen/watch_appbar_title_margin_start</item>
+        <item name="expandedTitleMarginEnd">@dimen/watch_appbar_title_margin_end</item>
+        <item name="expandedTitleMarginBottom">@dimen/watch_appbar_title_margin_bottom</item>
+        <item name="expandedTitleMarginTop">0dp</item>
     </style>
 </resources>

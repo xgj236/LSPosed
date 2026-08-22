@@ -64,6 +64,20 @@ public class BaseActivity extends MaterialActivity {
     private static volatile Boolean isWatch = null;
     private boolean applyingWatchDensity = false;
 
+    /**
+     * Whether this device is watch-class. Public because the compaction described above
+     * cannot be expressed as {@code -watch} resources: the qualifier keys off
+     * {@code uiMode}, which this class of device leaves at {@code normal} (verified with
+     * {@code am get-config} on the reference watch), so anything that has to shrink for a
+     * watch has to be keyed off the feature in code or off {@code ThemeOverlay.Watch}.
+     */
+    public static boolean isWatch(android.content.Context context) {
+        if (isWatch == null) {
+            isWatch = context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_WATCH);
+        }
+        return isWatch;
+    }
+
     private void applyWatchDensity(Resources res) {
         // getResources() is overridden to call this, and PackageManager lookups can
         // themselves reach back into getResources(), so guard against re-entering
@@ -71,10 +85,7 @@ public class BaseActivity extends MaterialActivity {
         if (res == null || applyingWatchDensity) return;
         applyingWatchDensity = true;
         try {
-            if (isWatch == null) {
-                isWatch = getPackageManager().hasSystemFeature(PackageManager.FEATURE_WATCH);
-            }
-            if (!isWatch) return;
+            if (!isWatch(this)) return;
             scaleForWatch(res);
         } finally {
             applyingWatchDensity = false;
@@ -172,7 +183,7 @@ public class BaseActivity extends MaterialActivity {
         }
         theme.applyStyle(ThemeUtil.getNightThemeStyleRes(this), true);
         theme.applyStyle(rikka.material.preference.R.style.ThemeOverlay_Rikka_Material3_Preference, true);
-        if (getPackageManager().hasSystemFeature(PackageManager.FEATURE_WATCH)) {
+        if (isWatch(this)) {
             theme.applyStyle(R.style.ThemeOverlay_Watch, true);
         }
     }
