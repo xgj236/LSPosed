@@ -22,6 +22,7 @@ package org.lsposed.manager.ui.fragment;
 import static android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS;
 
 import android.annotation.SuppressLint;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -88,6 +89,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
 
@@ -269,8 +271,12 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
         var tmp = new SparseArray<ModuleAdapter>(users.size());
         var snapshot = adapters;
         for (var user : users) {
-            if (snapshot.indexOfKey(user.id) >= 0) {
-                tmp.put(user.id, snapshot.get(user.id));
+            var existing = snapshot.get(user.id);
+            if (existing != null) {
+                // Keep the adapter object -- the page fragment captured this exact reference in
+                // onCreateView -- but let the real record replace the placeholder's blank name.
+                existing.updateUser(user);
+                tmp.put(user.id, existing);
             } else {
                 var adapter = new ModuleAdapter(user);
                 adapter.setHasStableIds(true);
@@ -521,10 +527,17 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
     class ModuleAdapter extends EmptyStateRecyclerView.EmptyStateAdapter<ModuleAdapter.ViewHolder> implements Filterable {
         private List<ModuleUtil.InstalledModule> searchList = new ArrayList<>();
         private List<ModuleUtil.InstalledModule> showList = new ArrayList<>();
-        private final UserInfo user;
+        // Not final: the first reload can only name the user the manager itself runs as, so the
+        // real record has to be able to land here later. Volatile because it is written from the
+        // reload thread and read from the UI thread (tab strip, install dialog).
+        private volatile UserInfo user;
         private final boolean isPick;
         private boolean isLoaded;
         private boolean refreshing = true;
+        // Set when a reload came back with no usable state. Without it a failed load and an
+        // empty one draw the same blank screen, so there is nothing to tell the user that
+        // pulling down would help.
+        private boolean loadFailed;
         private View.OnClickListener onPickListener;
 
         ModuleAdapter(UserInfo user) {
@@ -538,6 +551,20 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
 
         public UserInfo getUser() {
             return user;
+        }
+
+        /**
+         * Adopts the authoritative user record. Reusing an adapter by user id alone used to keep
+         * the placeholder's empty name in the tab strip and in the "install to user" dialog for
+         * the rest of the session, because the record was captured once at construction.
+         *
+         * @return whether anything actually changed, so the caller can skip a redraw
+         */
+        boolean updateUser(UserInfo real) {
+            var current = user;
+            if (current.id == real.id && Objects.equals(current.name, real.name)) return false;
+            user = real;
+            return true;
         }
 
         @NonNull
@@ -732,9 +759,11 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
             if (modules == null) {
                 // No usable state yet. ModuleUtil retries on its own; end this attempt
                 // so the spinner stops and the user can pull to retry as well.
+                setLoadFailed(true);
                 setRefreshing(false);
                 return;
             }
+            setLoadFailed(false);
             Comparator<PackageInfo> cmp = AppHelper.getAppListComparator(0, pm);
             setLoaded(null, false);
             var tmpList = new ArrayList<ModuleUtil.InstalledModule>();
@@ -787,9 +816,27 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
             });
         }
 
+        @SuppressLint("NotifyDataSetChanged")
+        private void setLoadFailed(boolean value) {
+            runOnUiThread(() -> {
+                if (loadFailed == value) return;
+                loadFailed = value;
+                notifyDataSetChanged();
+            });
+        }
+
         @Override
         public boolean isLoaded() {
             return isLoaded && moduleUtil.isModulesLoaded();
+        }
+
+        @Nullable
+        @Override
+        public CharSequence getEmptyStateText(@NonNull Context context) {
+            // Loading, loaded-empty and failed all render as an empty list, so say which it is.
+            // A populated list never reaches here.
+            if (loadFailed) return context.getString(R.string.module_list_load_failed);
+            return isLoaded() ? context.getString(R.string.list_empty) : null;
         }
 
         static class ViewHolder extends RecyclerView.ViewHolder {

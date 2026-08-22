@@ -68,6 +68,15 @@ public final class ModuleUtil {
     private boolean modulesLoaded = false;
     private int reloadAttempt = 0;
 
+    // Single-flight coordinator. Several independent triggers -- first use, the binder-ready
+    // callback, package broadcasts, the retry timer -- can fire within milliseconds of each
+    // other, and each one used to queue its own full rescan of every installed package. Now one
+    // pass runs at a time and everything that arrives while it is running collapses into a single
+    // follow-up pass, so N simultaneous triggers cost two scans rather than N.
+    private final Object reloadLock = new Object();
+    private boolean reloadRunning = false;
+    private boolean reloadRequested = false;
+
     private static final int MAX_RELOAD_ATTEMPTS = 5;
 
     static final int MATCH_ANY_USER = 0x00400000; // PackageManager.MATCH_ANY_USER
@@ -199,16 +208,50 @@ public final class ModuleUtil {
     }
 
     /**
-     * Wrapper around {@link #doReloadInstalledModules()} that reports failures.
-     * Reloads run through {@code ExecutorService.submit()}, which stores a thrown
-     * exception in the Future and never prints it -- so any failure in here used to
-     * leave an empty module list with no trace of why anywhere in the log.
+     * Wrapper around {@link #doReloadInstalledModules()} that reports failures and enforces
+     * single-flight execution.
+     * <p>
+     * Reloads run through {@code ExecutorService.submit()}, which stores a thrown exception in the
+     * Future and never prints it -- so any failure in here used to leave an empty module list with
+     * no trace of why anywhere in the log.
      */
     public void reloadInstalledModules() {
+        synchronized (reloadLock) {
+            if (reloadRunning) {
+                // A scan is already in flight. Ask it for one more pass instead of starting a
+                // second one, so the caller's newer state is still picked up without paying for
+                // another full rescan per trigger.
+                reloadRequested = true;
+                return;
+            }
+            reloadRunning = true;
+        }
         try {
-            doReloadInstalledModules();
+            for (; ; ) {
+                try {
+                    doReloadInstalledModules();
+                } catch (Throwable t) {
+                    Log.e(App.TAG, "Module reload threw", t);
+                }
+                synchronized (reloadLock) {
+                    if (!reloadRequested) {
+                        // Clear both flags under the same lock. Releasing "running" in a separate
+                        // step would let a request that arrived in between be dropped by a pass
+                        // that had already decided to stop.
+                        reloadRunning = false;
+                        return;
+                    }
+                    reloadRequested = false;
+                }
+            }
         } catch (Throwable t) {
-            Log.e(App.TAG, "Module reload threw", t);
+            // A stuck reloadRunning would silence every future reload for the rest of the
+            // session, so release it even on a failure this method cannot otherwise handle.
+            synchronized (reloadLock) {
+                reloadRunning = false;
+                reloadRequested = false;
+            }
+            throw t;
         }
     }
 

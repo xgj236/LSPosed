@@ -28,6 +28,7 @@ import android.text.TextPaint;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.ConcatAdapter;
 
@@ -38,7 +39,6 @@ import rikka.core.util.ResourceUtils;
 
 public class EmptyStateRecyclerView extends StatefulRecyclerView {
     private final TextPaint paint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
-    private final String emptyText;
 
     public EmptyStateRecyclerView(Context context) {
         this(context, null);
@@ -54,8 +54,6 @@ public class EmptyStateRecyclerView extends StatefulRecyclerView {
 
         paint.setColor(ResourceUtils.resolveColor(context.getTheme(), android.R.attr.textColorSecondary));
         paint.setTextSize(16f * dm.scaledDensity);
-
-        emptyText = context.getString(R.string.list_empty);
     }
 
     @Override
@@ -70,7 +68,11 @@ public class EmptyStateRecyclerView extends StatefulRecyclerView {
                 }
             }
         }
-        if (adapter instanceof EmptyStateAdapter && ((EmptyStateAdapter<?>) adapter).isLoaded() && adapter.getItemCount() == 0) {
+        if (adapter instanceof EmptyStateAdapter && adapter.getItemCount() == 0) {
+            // The adapter decides what an empty list means -- still loading, genuinely empty, or
+            // a failed load -- because all three draw the same blank screen otherwise.
+            var emptyText = ((EmptyStateAdapter<?>) adapter).getEmptyStateText(getContext());
+            if (emptyText == null) return;
             final int width = getMeasuredWidth() - getPaddingLeft() - getPaddingRight();
             final int height = getMeasuredHeight() - getPaddingTop() - getPaddingBottom();
 
@@ -87,5 +89,17 @@ public class EmptyStateRecyclerView extends StatefulRecyclerView {
 
     public abstract static class EmptyStateAdapter<T extends ViewHolder> extends SimpleStatefulAdaptor<T> {
         abstract public boolean isLoaded();
+
+        /**
+         * The message to draw over an empty list, or {@code null} to draw nothing.
+         * <p>
+         * The default distinguishes "still loading" (nothing, because the spinner already says
+         * so) from "loaded and there is nothing to show". Override to add further states -- a
+         * failed load in particular, which is otherwise indistinguishable from an empty one.
+         */
+        @Nullable
+        public CharSequence getEmptyStateText(@NonNull Context context) {
+            return isLoaded() ? context.getString(R.string.list_empty) : null;
+        }
     }
 }

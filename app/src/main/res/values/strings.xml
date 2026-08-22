@@ -169,6 +169,7 @@
     <!-- ModulesActivity and AppListActivity -->
     <string name="modules_other_app">View in other app</string>
     <string name="module_app_info">App info</string>
+    <string name="module_list_load_failed">Could not load the module list.\nSwipe down to try again.</string>
     <string name="list_empty">¯\\_(ツ)_\/¯\nNothing here</string>
 
     <!-- SettingsActivity -->
